@@ -1,0 +1,58 @@
+{
+  "version": "hearsay-20260925-1424",
+  "selected": "blend(logreg_all, gboost)",
+  "threshold": 0.5145050550043468,
+  "cv": {
+    "detectors_only (baseline)": {
+      "n": 237,
+      "accuracy": 0.729957805907173,
+      "balanced_accuracy": 0.7296071428571429,
+      "auc": 0.7865714285714286,
+      "eer": 0.28639285714285717,
+      "eer_threshold": 0.507869900596542
+    },
+    "logreg_all_features": {
+      "n": 237,
+      "accuracy": 0.9704641350210971,
+      "balanced_accuracy": 0.9701428571428572,
+      "auc": 0.9902857142857142,
+      "eer": 0.03385714285714287,
+      "eer_threshold": 0.5460295519383971
+    },
+    "gboost_signal+detectors": {
+      "n": 237,
+      "accuracy": 0.9620253164556962,
+      "balanced_accuracy": 0.96075,
+      "auc": 0.9884999999999999,
+      "eer": 0.029857142857142867,
+      "eer_threshold": 0.7402596001804723
+    },
+    "blend(logreg_all, gboost)": {
+      "n": 237,
+      "accuracy": 0.9789029535864979,
+      "balanced_accuracy": 0.9786071428571428,
+      "auc": 0.9947142857142858,
+      "eer": 0.02139285714285715,
+      "eer_threshold": 0.5145050550043468
+    }
+  },
+  "per_class_accuracy": {
+    "none": 0.9732142857142857,
+    "partial_synthetic": 1.0,
+    "tts_legacy": 1.0,
+    "tts_neural": 0.9642857142857143,
+    "voice_clone": 1.0,
+    "voice_conversion": 0.95
+  },
+  "type_model": {
+    "accuracy": 0.976,
+    "per_type_recall": {
+      "partial_synthetic": 1.0,
+      "tts_legacy": 1.0,
+      "tts_neural": 1.0,
+      "voice_clone": 0.8928571428571429,
+      "voice_conversion": 1.0
+    }
+  },
+  "n_train": 237
+}

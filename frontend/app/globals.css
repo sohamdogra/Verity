@@ -1,0 +1,92 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-body);
+  --font-heading: var(--font-display);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+
+  /* Signal bands — soft, warm, never alarmist neon. */
+  --color-safe: var(--safe);
+  --color-safe-soft: var(--safe-soft);
+  --color-caution: var(--caution);
+  --color-caution-soft: var(--caution-soft);
+  --color-concern: var(--concern);
+  --color-concern-soft: var(--concern-soft);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: #faf6ef;
+  --foreground: #2b2622;
+  --card: #fffdf9;
+  --card-foreground: #2b2622;
+  --popover: #fffdf9;
+  --popover-foreground: #2b2622;
+  --primary: #2f6b5e;
+  --primary-foreground: #ffffff;
+  --secondary: #f1eadf;
+  --secondary-foreground: #2b2622;
+  --muted: #f3ede3;
+  --muted-foreground: #6b6158;
+  --accent: #efe6d8;
+  --accent-foreground: #2b2622;
+  --destructive: #b4442e;
+  --border: #e6dccd;
+  --input: #d9cdbb;
+  --ring: #2f6b5e;
+  --radius: 0.875rem;
+
+  --safe: #3f8a5c;
+  --safe-soft: #e5f1e8;
+  --caution: #b97d12;
+  --caution-soft: #fbf0d8;
+  --concern: #b8432f;
+  --concern-soft: #fbe6e0;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    /* Large, comfortable type everywhere: every rem scales from here. */
+    font-size: 18px;
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-heading tracking-tight;
+  }
+}

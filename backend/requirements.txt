@@ -1,0 +1,17 @@
+# Install torch/torchaudio first for your hardware (see README):
+#   CPU:  pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#   CUDA: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+torch>=2.2
+torchaudio>=2.2
+transformers>=4.40
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+soundfile>=0.12
+numpy>=1.26
+httpx>=0.27
+python-dotenv>=1.0
+# Forensics ("Check a recording" + HEARSAY challenge)
+librosa>=0.10
+scikit-learn>=1.4
+joblib>=1.3

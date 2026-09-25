@@ -1,0 +1,19 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local data & secrets
+backend/*.db
+backend/.env
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated HEARSAY dev set (rebuild with scripts/devset/make_devset.py)
+backend/devset/
+backend/.hearsay_cache/
