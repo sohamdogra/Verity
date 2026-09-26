@@ -17,3 +17,6 @@ Thumbs.db
 # Generated HEARSAY dev set (rebuild with scripts/devset/make_devset.py)
 backend/devset/
 backend/.hearsay_cache/
+
+# HEARSAY data from NSA (never commit)
+data/

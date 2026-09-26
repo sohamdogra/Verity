@@ -47,6 +47,11 @@ class TrainedBundle:
         self.uses_embeddings: bool = data.get("uses_embeddings", False)
         self.detectors: list[str] = data.get("detectors", [])
         self.version: str = data.get("version", path.stem)
+        from .neural import EXTRA_EMBEDDERS
+
+        known = {prefix for _, prefix in EXTRA_EMBEDDERS.values()}
+        # Extra SSL front-ends this model was trained with (feature names like "xlsr_mean_0").
+        self.extra_prefixes: set[str] = {n.split("_", 1)[0] for n in self.feature_names} & known
 
     def vector(self, feats: dict[str, float]) -> tuple[np.ndarray, int]:
         missing = sum(1 for n in self.feature_names if n not in feats)
@@ -85,7 +90,7 @@ def default_fusion(techniques: list[dict]) -> float | None:
             w = DEFAULT_DETECTOR_WEIGHTS.get(t["id"].split(":", 1)[1], 1.0)
             num, den = num + w * t["score"], den + w
     neural = num / den if den else None
-    signal_scores = [t["score"] for t in techniques if t["kind"] == "signal" and t["score"] is not None]
+    signal_scores = [t["score"] for t in techniques if t["kind"] in ("signal", "metadata") and t["score"] is not None]
     signal = float(np.mean(signal_scores)) if signal_scores else None
     if neural is None:
         return signal

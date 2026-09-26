@@ -3,6 +3,7 @@
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +11,7 @@ import numpy as np
 from detection.labels import classify_label
 
 AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac", ".webm", ".mp4", ".wma", ".amr", ".3gp"}
-FEATURE_VERSION = 1
+FEATURE_VERSION = 2
 
 FILE_COLS = ("filename", "file", "file_name", "path", "filepath", "audio", "audio_path", "clip", "name", "id", "utt", "utterance")
 LABEL_COLS = ("label", "labels", "class", "target", "is_fake", "is_synthetic", "fake", "spoof", "y", "ground_truth", "gt", "key")
@@ -102,10 +103,19 @@ class FeatureCache:
 
     def get(self, data: bytes) -> dict | None:
         p = self._path(data)
-        return json.loads(p.read_text()) if p.exists() else None
+        if not p.exists():
+            return None
+        try:
+            return json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):  # e.g. a process killed mid-write: recompute
+            p.unlink(missing_ok=True)
+            return None
 
     def put(self, data: bytes, feats: dict) -> None:
-        self._path(data).write_text(json.dumps(feats))
+        p = self._path(data)
+        tmp = p.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(feats))
+        os.replace(tmp, p)  # atomic: readers never see a half-written file
 
 
 # ---- metrics --------------------------------------------------------------------------
@@ -121,6 +131,32 @@ def eer(y: np.ndarray, p: np.ndarray) -> tuple[float, float]:
     return float((fpr[i] + fnr[i]) / 2), float(thr[i])
 
 
+# HEARSAY scoring (NSA): ASVspoof5 minDCF with non-default costs.
+HEARSAY_PSPOOF = 0.3  # 30% of trials are spoofs
+HEARSAY_CMISS = 1.0  # cost of rejecting a bona fide clip
+HEARSAY_CFA = 4.0  # cost of accepting a spoof
+
+
+def asvspoof_min_dcf(y: np.ndarray, p_synthetic: np.ndarray, pspoof: float = HEARSAY_PSPOOF,
+                     cmiss: float = HEARSAY_CMISS, cfa: float = HEARSAY_CFA) -> tuple[float, float]:
+    """minDCF and EER exactly as the ASVspoof5 evaluation package computes them.
+
+    That package treats bona fide as the target class, with HIGHER scores meaning bona fide.
+    Our scores are P(synthetic), so they are negated here. Returns (min_dcf, eer)."""
+    bona, spoof = -p_synthetic[y == 0], -p_synthetic[y == 1]
+    scores = np.concatenate((bona, spoof))
+    labels = np.concatenate((np.ones(bona.size), np.zeros(spoof.size)))[np.argsort(scores, kind="mergesort")]
+    tar_sums = np.cumsum(labels)
+    non_sums = spoof.size - (np.arange(1, scores.size + 1) - tar_sums)
+    frr = np.concatenate(([0.0], tar_sums / bona.size))  # bona fide rejected
+    far = np.concatenate(([1.0], non_sums / spoof.size))  # spoof accepted
+    i = int(np.argmin(np.abs(frr - far)))
+    eer_value = float((frr[i] + far[i]) / 2)
+    p_target = 1 - pspoof
+    c_det = cmiss * frr * p_target + cfa * far * (1 - p_target)
+    return float(c_det.min() / min(cmiss * p_target, cfa * (1 - p_target))), eer_value
+
+
 def metrics(y: np.ndarray, p: np.ndarray, threshold: float = 0.5) -> dict:
     from sklearn.metrics import accuracy_score, balanced_accuracy_score, roc_auc_score
 
@@ -129,6 +165,7 @@ def metrics(y: np.ndarray, p: np.ndarray, threshold: float = 0.5) -> dict:
     if len(set(y)) == 2:
         out["auc"] = float(roc_auc_score(y, p))
         out["eer"], out["eer_threshold"] = eer(y, p)
+        out["min_dcf"], _ = asvspoof_min_dcf(y, p)
     return out
 
 

@@ -77,6 +77,7 @@ export function useShield({ familyId, windowSeconds }: { familyId: number | null
     async (samples: Float32Array, run: number, allowSkip: boolean) => {
       if (allowSkip && inFlightRef.current >= 2) return; // backend is behind; drop this window
       inFlightRef.current++;
+      const sentAt = Date.now(); // the window ended now; used to line verdicts up with the audio
       try {
         const res = await api.analyze(encodeWav(samples), sessionRef.current, familyRef.current);
         if (run !== runRef.current) return;
@@ -84,7 +85,7 @@ export function useShield({ familyId, windowSeconds }: { familyId: number | null
         setQuiet(res.silent);
         const score = res.synthetic_likelihood;
         if (!res.silent && score != null) {
-          setReadings((r) => [...r, { score, at: Date.now() }].slice(-MAX_READINGS));
+          setReadings((r) => [...r, { score, at: sentAt }].slice(-MAX_READINGS));
         }
       } catch (e) {
         if (run !== runRef.current) return;

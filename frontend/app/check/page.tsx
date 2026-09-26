@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, AudioLines, ChevronDown, FileSearch, Loader2, MessageSquareQuote, Upload } from "lucide-react";
 import { BandStatus } from "@/components/band-status";
+import { EvidenceView } from "@/components/evidence-view";
 import { DetectionUnavailable } from "@/components/notices";
 import { ProtectActions } from "@/components/protect-actions";
 import { SignalMeter } from "@/components/signal-meter";
@@ -81,6 +82,7 @@ export default function CheckRecordingPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [report, setReport] = useState<ForensicReport | null>(null);
+  const [analyzed, setAnalyzed] = useState<Blob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -95,10 +97,12 @@ export default function CheckRecordingPage() {
     setBusy(name);
     setProgress(0);
     setReport(null);
+    setAnalyzed(null);
     setError(null);
     setUnavailable(false);
     try {
       setReport(await api.forensics(file, name, family?.id));
+      setAnalyzed(file);
     } catch (e) {
       if (e instanceof ApiError && e.status === 503) setUnavailable(true);
       else setError(e instanceof Error ? e.message : "Couldn't check that recording.");
@@ -114,7 +118,7 @@ export default function CheckRecordingPage() {
   };
 
   const detectors = report?.techniques?.filter((t) => t.kind === "neural_detector") ?? [];
-  const signals = report?.techniques?.filter((t) => t.kind === "signal") ?? [];
+  const signals = report?.techniques?.filter((t) => t.kind !== "neural_detector") ?? [];
   const value = report?.synthetic_likelihood != null ? report.synthetic_likelihood / 100 : null;
   const cues = report?.transcript?.cues ?? [];
 
@@ -203,6 +207,12 @@ export default function CheckRecordingPage() {
                 <ProtectActions family={family} band="red" smoothed={value} big />
               </div>
             </section>
+          )}
+
+          {analyzed && (
+            <Card className="p-5 sm:p-6">
+              <EvidenceView audio={analyzed} report={report} thresholds={thresholds} />
+            </Card>
           )}
 
           <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr]">
@@ -297,6 +307,15 @@ export default function CheckRecordingPage() {
                     {report.metadata.codec ?? report.metadata.container} · {report.metadata.sample_rate / 1000} kHz ·{" "}
                     {report.metadata.channels} ch · {report.metadata.duration_s}s
                   </dd>
+                  {report.container && report.container.riff_chunks.length > 0 && (
+                    <>
+                      <dt className="text-muted-foreground">Container</dt>
+                      <dd>
+                        chunks {report.container.riff_chunks.join(", ")}
+                        {Object.entries(report.container.tags).map(([k, v]) => ` · ${k}=${v}`).join("")}
+                      </dd>
+                    </>
+                  )}
                   <dt className="text-muted-foreground">Time</dt>
                   <dd>{report.elapsed_seconds}s</dd>
                 </dl>

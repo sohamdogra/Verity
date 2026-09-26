@@ -30,11 +30,13 @@ export function ProtectActions({
   band,
   smoothed,
   big,
+  stacked,
 }: {
   family: Family | null;
   band?: Band;
   smoothed?: number | null;
   big?: boolean;
+  stacked?: boolean;
 }) {
   const router = useRouter();
   const [sending, setSending] = useState(false);
@@ -60,7 +62,7 @@ export function ProtectActions({
 
   return (
     <div className="space-y-2">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className={cn("grid gap-3", !stacked && "sm:grid-cols-3")}>
         <Link href="/verify" className={cn(buttonVariants({ size }), "min-h-13")}>
           <BadgeCheck />
           Verify caller

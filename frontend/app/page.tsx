@@ -1,13 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { useRef } from "react";
-import { AlertTriangle, FileAudio, Loader2, Mic, MicOff, Play, Square } from "lucide-react";
+import { AlertTriangle, FileAudio, Loader2, Mic, MicOff, PhoneCall, Play, Square } from "lucide-react";
 import { BandStatus } from "@/components/band-status";
 import { ExplanationPanel } from "@/components/explanation-panel";
 import { DetectionLoading, DetectionUnavailable, ServerUnreachable } from "@/components/notices";
 import { ProtectActions } from "@/components/protect-actions";
 import { SampleDots, SignalMeter } from "@/components/signal-meter";
-import { Waveform } from "@/components/waveform";
+import { LiveSpectrogram } from "@/components/live-spectrogram";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useFamily } from "@/hooks/use-family";
@@ -15,8 +16,6 @@ import { useHealth } from "@/hooks/use-health";
 import { useShield } from "@/hooks/use-shield";
 import { DEMO_CLIPS } from "@/lib/demo-clips";
 import { DEFAULT_THRESHOLDS } from "@/lib/signal";
-
-const WAVE_COLORS = { idle: "#8a7f74", green: "#3f8a5c", amber: "#b97d12", red: "#b8432f" };
 
 export default function LiveShieldPage() {
   const { health, reachable } = useHealth();
@@ -43,6 +42,12 @@ export default function LiveShieldPage() {
           a private question, or calling back on a number you trust. Verity&apos;s detector is an extra signal on
           top of that.
         </p>
+        <Link
+          href="/call"
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary/10 px-4 py-2.5 text-lg font-bold text-primary hover:bg-primary/15"
+        >
+          <PhoneCall className="size-5" /> On a call right now? Use simple call mode
+        </Link>
       </section>
 
       {!reachable && <ServerUnreachable />}
@@ -77,9 +82,12 @@ export default function LiveShieldPage() {
       <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr]">
         <Card className="gap-5 p-5 sm:p-6">
           <BandStatus band={band} listening={listening} />
-          <div className="rounded-2xl bg-muted/60 px-3 py-2">
-            <Waveform analyser={shield.analyser} color={WAVE_COLORS[band]} />
-          </div>
+          <LiveSpectrogram
+            analyser={shield.analyser}
+            readings={shield.readings}
+            windowSeconds={health?.window_seconds ?? 2.5}
+            thresholds={thresholds}
+          />
           <SignalMeter value={shield.result?.smoothed ?? null} thresholds={thresholds} />
           <SampleDots readings={shield.readings} thresholds={thresholds} />
 

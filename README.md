@@ -22,7 +22,7 @@ If the model fails to download, the internet is down or detection breaks, Verity
 - signal forensics: digital silence, bandwidth, noise floor, prosody and splice checks
 - a Whisper transcript checked for scam-script language
 
-The same engine answers the **NSA HEARSAY challenge**: a 0–100 synthetic likelihood, the manipulation type, and a submission CSV. See **[HEARSAY.md](HEARSAY.md)**.
+The same engine answers the **NSA HEARSAY challenge**. It is trained on the NSA data (LJ real speech + DiffSSD's 10 generators), selected by the challenge's own metric (ASVspoof5 minDCF, π_spoof = 0.3, C_fa = 4), and writes the official `filename<TAB>cm-score` TSV, also from a Docker image. See **[HEARSAY.md](HEARSAY.md)**.
 
 ---
 
@@ -154,11 +154,15 @@ Verity/
 │   │   ├── neural.py            5-detector ensemble + WavLM embeddings
 │   │   ├── transcript.py        Whisper + scam-script cues
 │   │   ├── fusion.py            trained bundle or default weighted fusion; manipulation type
+│   │   ├── harmonize.py         make training audio match the test set; label-blind augmentation
+│   │   ├── metadata.py          RIFF/tags/header/MAC-time container forensics (report only)
 │   │   └── training.py          label parsing, feature cache, metrics
-│   ├── models/hearsay.joblib    trained fusion model (+ hearsay_metrics.json)
+│   ├── models/                  hearsay.joblib (full model), hearsay_live.joblib (fast / Live Shield), metrics
+│   ├── Dockerfile               HEARSAY inference image (scores /data -> /out/predictions.tsv)
 │   ├── scripts/
 │   │   ├── calibrate.py         score clips per window; compare models
-│   │   ├── hearsay.py           HEARSAY train / predict (submission CSV) / evaluate
+│   │   ├── hearsay.py           HEARSAY extract / train / predict (submission TSV) / evaluate
+│   │   ├── hearsay_prepare.py   harmonize + augment NSA training data to the test-set format
 │   │   ├── devset/              build the labeled practice set (+ demo clips)
 │   │   └── make_demo_clips.py   legacy stand-in clip generator
 │   └── tests/                   label mapping, hashing, bands, decoding, fusion, labels CSV

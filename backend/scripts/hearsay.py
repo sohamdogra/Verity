@@ -1,10 +1,13 @@
-"""HEARSAY: The Audio Authentication Challenge — train, predict (submission CSV), evaluate.
+"""HEARSAY: The Audio Authentication Challenge — extract, train, predict (submission TSV), evaluate.
+
+  # 0. (optional, parallel) pre-compute features: run N shards in separate terminals
+  .venv\\Scripts\\python scripts\\hearsay.py extract --data <dir> --shard 0 --shards 3
 
   # 1. Train the fusion model on the labeled training set (any audio formats)
-  .venv\\Scripts\\python scripts\\hearsay.py train --data path\\to\\train --labels path\\to\\train_labels.csv
+  .venv\\Scripts\\python scripts\\hearsay.py train --data path\\to\\train --labels path\\to\\labels.csv --group-col group
 
-  # 2. Predict the held-out test set -> submission CSV
-  .venv\\Scripts\\python scripts\\hearsay.py predict --data path\\to\\test --out predictions.csv
+  # 2. Predict the held-out test set -> submission TSV (filename <tab> cm-score, 0.0-1.0, 1.0 = synthetic)
+  .venv\\Scripts\\python scripts\\hearsay.py predict --data path\\to\\test --out teamName_predictions.tsv
 
   # 3. (Optional) score predictions against labels you have
   .venv\\Scripts\\python scripts\\hearsay.py evaluate --data path\\to\\test --labels test_labels.csv
@@ -39,11 +42,29 @@ from forensics.training import FeatureCache, SubsetBlend, list_audio, metrics, r
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.WARNING)
 CACHE_DIR = BACKEND / ".hearsay_cache"
+# Properties of the FILE, not the voice. The HEARSAY test set is uniform on all of them
+# (16 kHz, 3-5 s, same low-pass), so a model must never learn from them.
+FORMAT_FEATURES = {"duration_s", "native_rate", "lossy", "bandwidth_cutoff_hz", "bandwidth_ratio"}
 FEATURE_SETS = {
-    "all": lambda n: True,
-    "no-embeddings": lambda n: not n.startswith("emb_"),
+    "all": lambda n: n not in FORMAT_FEATURES,
+    "no-embeddings": lambda n: n not in FORMAT_FEATURES and not n.startswith("emb_"),
     # Fast enough for Live Shield: no detector ensemble, just embeddings + signal features.
-    "live": lambda n: not n.startswith("det_"),
+    "live": lambda n: n not in FORMAT_FEATURES and not n.startswith(("det_", "xlsr_")),
+    "no-extra-embeddings": lambda n: n not in FORMAT_FEATURES and not n.startswith("xlsr_"),
+}
+# Technique families, for the "what worked / what had no effect" report.
+FAMILIES = {
+    "Deep-learning anti-spoofing detectors (5 models)": ("det_",),
+    "Self-supervised embeddings (WavLM)": ("emb_mean_", "emb_std_"),
+    "Self-supervised embeddings (XLS-R 300M)": ("xlsr_",),
+    "Speaker-embedding drift": ("spk_drift",),
+    "Spectral statistics + MFCC": ("spec_", "mfcc"),
+    "Prosody (pitch, jitter, voicing)": ("f0_", "jitter", "voiced_ratio"),
+    "Noise floor & dynamics": ("noise_floor", "speech_level", "dynamic_range", "frame_db_std"),
+    "Digital silence": ("digital_silence",),
+    "Splice / seams (envelope, DC, phase)": ("continuity", "dc_offset", "phase_jump"),
+    "ENF mains hum": ("enf_",),
+    "Compression / transcoding traces": ("hf_hole", "rolloff99", "hf_energy"),
 }
 
 
@@ -52,23 +73,44 @@ def _signature(embeddings: bool) -> dict:
             "window": config.FORENSICS_WINDOW_SECONDS, "hop": config.FORENSICS_HOP_SECONDS}
 
 
-def featurize(paths: list[Path], embeddings: bool = True) -> list[dict | None]:
+def featurize(paths: list[Path], embeddings: bool = True, threads: int | None = None,
+              extra: bool | set[str] = False, base: bool = True) -> list[dict | None]:
+    """Base features (+ optional extra SSL embeddings), each cached separately by content hash."""
+    if threads:
+        import torch
+
+        torch.set_num_threads(threads)
     analyzer = get_analyzer()
     cache = FeatureCache(CACHE_DIR, _signature(embeddings))
+    extra_embedders = [e for e in analyzer.extra_embedders
+                       if extra is True or (isinstance(extra, set) and e.prefix in extra)]
+    extra_caches = [(e, FeatureCache(CACHE_DIR, {"embedding": e.model_id, "layers": list(e.layers)}))
+                    for e in extra_embedders]
     out: list[dict | None] = []
     started = time.time()
     fresh = 0
     for i, path in enumerate(paths, 1):
         data = path.read_bytes()
-        feats = cache.get(data)
+        feats = cache.get(data) if base else {}
+        decoded = None
         if feats is None:
             try:
-                feats, _, _ = analyzer.extract(decode_any(data, path.name), embeddings=embeddings)
+                decoded = decode_any(data, path.name)
+                feats, _, _ = analyzer.extract(decoded, embeddings=embeddings)
                 cache.put(data, feats)
                 fresh += 1
             except Exception as exc:
                 print(f"  ! {path.name}: {exc}")
                 feats = None
+        if feats is not None:
+            for emb, ecache in extra_caches:
+                extra_feats = ecache.get(data)
+                if extra_feats is None:
+                    decoded = decoded or decode_any(data, path.name)
+                    extra_feats = emb.embed(decoded.audio)
+                    ecache.put(data, extra_feats)
+                    fresh += 1
+                feats = {**feats, **extra_feats}
         out.append(feats)
         if i % 10 == 0 or i == len(paths):
             rate = (time.time() - started) / max(fresh, 1)
@@ -90,7 +132,9 @@ def _models(names: list[str]) -> dict:
     every = list(range(len(names)))
     no_emb = [i for i, n in enumerate(names) if not n.startswith("emb_")]
     detectors = [i for i, n in enumerate(names) if n.startswith("det_")]
-    lr = lambda: make_pipeline(StandardScaler(), LogisticRegression(C=0.05, max_iter=5000, class_weight="balanced"))  # noqa: E731
+    no_det = [i for i, n in enumerate(names) if not n.startswith("det_")]
+    # C=0.02 was best in leave-generator-out CV on the NSA training data (see HEARSAY.md).
+    lr = lambda: make_pipeline(StandardScaler(), LogisticRegression(C=0.02, max_iter=5000, class_weight="balanced"))  # noqa: E731
     hgb = lambda: HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_leaf_nodes=15,  # noqa: E731
                                                  l2_regularization=1.0, class_weight="balanced", random_state=0)
     embeddings = [i for i, n in enumerate(names) if n.startswith("emb_")]
@@ -98,11 +142,31 @@ def _models(names: list[str]) -> dict:
         "detectors_only (baseline)": lambda: SubsetBlend([(detectors, lr())]),
         "logreg_embeddings_only": lambda: SubsetBlend([(embeddings, lr())]),
         "logreg_all_features": lambda: SubsetBlend([(every, lr())]),
+        # The pretrained detectors barely generalize to unseen generators and add noise.
+        "logreg_no_detectors": lambda: SubsetBlend([(no_det, lr())]),
         "gboost_signal+detectors": lambda: SubsetBlend([(no_emb, hgb())]),
         "blend(logreg_all, gboost)": lambda: SubsetBlend([(every, lr()), (no_emb, hgb())]),
     }
     return {k: v for k, v in candidates.items()
             if (detectors or "detectors" not in k) and (embeddings or "embeddings" not in k)}
+
+
+def _family_report(names, X, y, groups, folds) -> list[dict]:
+    """Train a small model on each technique family alone: which techniques carry signal?"""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    rows = []
+    for family, prefixes in FAMILIES.items():
+        cols = [i for i, n in enumerate(names) if n.startswith(prefixes)]
+        if not cols:
+            continue
+        factory = lambda cols=cols: SubsetBlend([(cols, make_pipeline(  # noqa: E731
+            StandardScaler(), LogisticRegression(C=0.05, max_iter=5000, class_weight="balanced")))])
+        m = metrics(y, _oof(factory, X, y, groups, folds))
+        rows.append({"family": family, "features": len(cols), **{k: m.get(k) for k in ("min_dcf", "eer", "auc")}})
+    return sorted(rows, key=lambda r: r["min_dcf"])
 
 
 def _oof(factory, X, y, groups, folds: int) -> np.ndarray:
@@ -128,7 +192,8 @@ def cmd_train(args) -> None:
         print(f"Warning: {len(missing)} labeled files not found (e.g. {missing[:3]})")
     rows, paths = zip(*[(r, p) for r, p in zip(rows, paths) if p is not None])
     print(f"Training on {len(rows)} files ({sum(r['y'] for r in rows)} synthetic).")
-    feats = featurize(list(paths), embeddings=not args.no_embeddings)
+    feats = featurize(list(paths), embeddings=not args.no_embeddings, threads=args.threads,
+                      extra=not args.no_extra_embeddings)
     keep = [i for i, f in enumerate(feats) if f is not None]
     rows, feats = [rows[i] for i in keep], [feats[i] for i in keep]
     names = sorted(k for k in {k for f in feats for k in f} if FEATURE_SETS[args.feature_set](k))
@@ -146,9 +211,11 @@ def cmd_train(args) -> None:
         p = _oof(factory, X, y, groups, folds)
         results[name] = (metrics(y, p), p, factory)
         m = results[name][0]
-        print(f"  {name:<28} AUC {m.get('auc', float('nan')):.3f}  EER {m.get('eer', float('nan')):.3f}  "
-              f"balanced acc {m['balanced_accuracy']:.3f}")
-    best = max((k for k in results if "baseline" not in k), key=lambda k: (results[k][0].get("auc", 0), -results[k][0].get("eer", 1)))
+        print(f"  {name:<28} minDCF {m.get('min_dcf', float('nan')):.4f}  EER {m.get('eer', float('nan')):.4f}  "
+              f"AUC {m.get('auc', float('nan')):.4f}")
+    # The challenge metric: minDCF (Pspoof 0.3, Cfa 4) — lower is better.
+    best = min((k for k in results if "baseline" not in k),
+               key=lambda k: (results[k][0].get("min_dcf", 9), results[k][0].get("eer", 1)))
     best_metrics, best_oof, factory = results[best]
     threshold = float(np.clip(best_metrics.get("eer_threshold", 0.5), 0.05, 0.95))
     model = factory().fit(X, y)
@@ -182,9 +249,17 @@ def cmd_train(args) -> None:
         idx = [i for i, r in enumerate(rows) if (r["type"] or "unknown") == kind]
         target = rows[idx[0]]["y"]
         per_type[kind] = float(np.mean((best_oof[idx] >= threshold) == target))
-    print("Cross-validated accuracy per class:")
+    print("Cross-validated accuracy per class (held-out generators / speakers):")
     for kind, acc in per_type.items():
-        print(f"    {kind:<22} {acc:.2f}")
+        print(f"    {kind:<26} {acc:.2f}")
+
+    families = []
+    if not args.skip_family_report:
+        print("\nWhat each technique family achieves on its own (same grouped CV):")
+        families = _family_report(names, X, y, groups, folds)
+        for r in families:
+            print(f"    {r['family']:<48} minDCF {r['min_dcf']:.4f}  EER {r['eer']:.4f}  "
+                  f"AUC {r['auc']:.4f}  ({r['features']} features)")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     version = datetime.now(timezone.utc).strftime("hearsay-%Y%m%d-%H%M")
@@ -197,12 +272,13 @@ def cmd_train(args) -> None:
         "n_train": len(rows),
     }, args.out)
     report = {"version": version, "selected": best, "threshold": threshold, "cv": {k: v[0] for k, v in results.items()},
-              "per_class_accuracy": per_type, "type_model": type_metrics, "n_train": len(rows)}
+              "per_class_accuracy": per_type, "type_model": type_metrics, "n_train": len(rows),
+              "technique_families": families, "cv_grouping": args.group_col or "stratified"}
     args.out.with_name(args.out.stem + "_metrics.json").write_text(json.dumps(report, indent=2))
     print(f"\nSaved {args.out} (+ metrics JSON)")
 
 
-def predict_paths(paths: list[Path], model_path: Path) -> list[dict]:
+def predict_paths(paths: list[Path], model_path: Path, threads: int | None = None) -> list[dict]:
     bundle = load_bundle(model_path, None)
     out = []
     if bundle is None:
@@ -219,7 +295,7 @@ def predict_paths(paths: list[Path], model_path: Path) -> list[dict]:
             if i % 10 == 0:
                 print(f"  {i}/{len(paths)}", flush=True)
         return out
-    feats = featurize(paths, embeddings=bundle.uses_embeddings)
+    feats = featurize(paths, embeddings=bundle.uses_embeddings, threads=threads, extra=bundle.extra_prefixes)
     for path, f in zip(paths, feats):
         if f is None:
             out.append({"path": path, "p": 0.5, "type": "unknown", "threshold": bundle.threshold})
@@ -236,15 +312,42 @@ def predict_paths(paths: list[Path], model_path: Path) -> list[dict]:
 def cmd_predict(args) -> None:
     paths = list_audio(args.data)[: args.limit or None]
     print(f"Predicting {len(paths)} files ...")
-    results = predict_paths(paths, args.model)
-    with args.out.open("w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow([args.id_col, "synthetic_likelihood", "prediction", "manipulation_type"])
-        for r in results:
-            name = r["path"].relative_to(args.data).as_posix()
-            score = round(r["p"] * 100, 2) if args.scale == 100 else round(r["p"], 4)
-            w.writerow([name, score, "synthetic" if r["p"] >= r["threshold"] else "bonafide", r["type"]])
-    print(f"Wrote {args.out}")
+    results = predict_paths(paths, args.model, threads=args.threads)
+    if args.format == "tsv":
+        # Official HEARSAY format: header "filename<TAB>cm-score", score = P(synthetic) in [0, 1].
+        scores = {r["path"].name: min(1.0, max(0.0, r["p"])) for r in results}
+        names = sorted(scores)
+        if args.template:
+            # Follow NSA's score-key template exactly: same files, same order.
+            lines = args.template.read_text(encoding="utf-8-sig").splitlines()[1:]
+            names = [n for n in (line.split("\t")[0].strip() for line in lines) if n]
+            missing = [n for n in names if n not in scores]
+            extra = sorted(set(scores) - set(names))
+            if missing:
+                print(f"WARNING: {len(missing)} template files had no audio/score (written as 0.5), e.g. {missing[:3]}")
+            if extra:
+                print(f"Note: {len(extra)} scored files are not in the template and were left out, e.g. {extra[:3]}")
+        with args.out.open("w", newline="", encoding="utf-8") as f:
+            f.write("filename\tcm-score\n")
+            for name in names:
+                f.write(f"{name}\t{scores.get(name, 0.5):.6f}\n")
+    else:
+        with args.out.open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow([args.id_col, "synthetic_likelihood", "prediction", "manipulation_type"])
+            for r in results:
+                name = r["path"].relative_to(args.data).as_posix()
+                w.writerow([name, round(r["p"] * 100, 2), "synthetic" if r["p"] >= r["threshold"] else "bonafide",
+                            r["type"]])
+    print(f"Wrote {len(results)} predictions to {args.out}")
+
+
+def cmd_extract(args) -> None:
+    paths = list_audio(args.data)
+    mine = paths[args.shard :: args.shards]
+    print(f"Shard {args.shard + 1}/{args.shards}: extracting features for {len(mine)} of {len(paths)} files ...")
+    featurize(mine, embeddings=not args.no_embeddings, threads=args.threads,
+              extra=args.extra_embeddings or args.only_extra, base=not args.only_extra)
 
 
 def cmd_evaluate(args) -> None:
@@ -256,7 +359,7 @@ def cmd_evaluate(args) -> None:
     p = np.array([x["p"] for x in results])
     thr = results[0]["threshold"] if results else 0.5
     m = metrics(y, p, thr)
-    print(f"\nHeld-out: n={m['n']}  AUC {m.get('auc', float('nan')):.3f}  EER {m.get('eer', float('nan')):.3f}  "
+    print(f"\nHeld-out: n={m['n']}  minDCF {m.get('min_dcf', float('nan')):.4f}  AUC {m.get('auc', float('nan')):.3f}  EER {m.get('eer', float('nan')):.3f}  "
           f"accuracy {m['accuracy']:.3f}  balanced {m['balanced_accuracy']:.3f}  (threshold {thr:.3f})")
     kinds = sorted({r["type"] or "unknown" for r, _ in pairs})
     for kind in kinds:
@@ -290,14 +393,29 @@ def main() -> None:
                    help="'live' trains the fast Live Shield model (no detector ensemble)")
     t.add_argument("--out", type=Path, default=config.HEARSAY_MODEL_PATH)
     t.add_argument("--limit", type=int)
+    t.add_argument("--threads", type=int, help="Torch CPU threads")
+    t.add_argument("--skip-family-report", action="store_true")
+    t.add_argument("--no-extra-embeddings", action="store_true", help="Don't compute/use the extra SSL front-ends")
     t.set_defaults(fn=cmd_train)
+
+    x = sub.add_parser("extract", help="Pre-compute cached features (run shards in parallel)")
+    x.add_argument("--data", type=Path, required=True)
+    x.add_argument("--shard", type=int, default=0)
+    x.add_argument("--shards", type=int, default=1)
+    x.add_argument("--threads", type=int)
+    x.add_argument("--no-embeddings", action="store_true")
+    x.add_argument("--extra-embeddings", action="store_true", help="Also compute the extra SSL front-ends (XLS-R)")
+    x.add_argument("--only-extra", action="store_true", help="Compute only the extra SSL front-ends")
+    x.set_defaults(fn=cmd_extract)
 
     p = sub.add_parser("predict")
     p.add_argument("--data", type=Path, required=True)
-    p.add_argument("--out", type=Path, default=Path("predictions.csv"))
+    p.add_argument("--out", type=Path, default=Path("predictions.tsv"))
+    p.add_argument("--format", choices=["tsv", "csv"], default="tsv", help="tsv = official HEARSAY submission format")
+    p.add_argument("--template", type=Path, help="NSA score-key TSV: output follows its file list and order")
+    p.add_argument("--threads", type=int)
     p.add_argument("--model", type=Path, default=config.HEARSAY_MODEL_PATH)
     p.add_argument("--id-col", default="filename", help="Header for the file column")
-    p.add_argument("--scale", type=int, choices=[1, 100], default=100, help="100 = percent (default), 1 = probability")
     p.add_argument("--limit", type=int)
     p.set_defaults(fn=cmd_predict)
 

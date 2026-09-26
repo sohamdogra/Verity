@@ -93,3 +93,50 @@ def test_read_labels_autodetects_columns(tmp_path):
 def test_metrics_perfect_separation():
     m = metrics(np.array([0, 0, 1, 1]), np.array([0.1, 0.2, 0.8, 0.9]))
     assert m["auc"] == 1.0 and m["eer"] == 0.0 and m["accuracy"] == 1.0
+
+
+def test_harmonize_matches_test_set_format():
+    import random
+
+    from forensics.harmonize import augment, to_test_domain
+
+    rng = random.Random(0)
+    y = np.tile(_speechlike(1.0), 9)  # 9 s at 16 kHz
+    out = to_test_domain(np.repeat(y, 2)[: y.size * 2], 32_000, rng)  # pretend 32 kHz source
+    assert 3.0 * SR <= out.size <= 5.0 * SR
+    assert abs(float(np.abs(out).max()) - 0.999) < 1e-3
+    aug, names = augment(out, random.Random(1), p=1.0)
+    assert names and aug.size == out.size and abs(float(np.abs(aug).max()) - 0.999) < 1e-3
+
+
+def test_riff_metadata_parsing():
+    from forensics.metadata import _riff_chunks, inspect
+
+    wav = bytearray(_wav(_speechlike(1.0)))
+    chunks, tags, problem = _riff_chunks(bytes(wav))
+    assert [c for c, _ in chunks][:1] == ["fmt "] and problem is None
+    truncated = bytes(wav[:-1000])
+    assert _riff_chunks(truncated)[2] is not None  # header no longer matches payload
+    technique, _ = inspect(truncated, "x.wav", "WAV", "PCM_16")
+    assert technique["score"] == 0.4
+
+
+def test_min_dcf_hearsay_costs():
+    from forensics.training import asvspoof_min_dcf
+
+    y = np.array([0, 0, 0, 1, 1])
+    assert asvspoof_min_dcf(y, np.array([0.1, 0.2, 0.3, 0.8, 0.9]))[0] == 0.0  # perfect ranking
+    # All spoofs accepted costs Cfa*Pspoof = 1.2 vs rejecting all bona fide 0.7 -> normalized 0.7/0.7 = 1.0
+    assert asvspoof_min_dcf(y, np.array([0.9, 0.9, 0.9, 0.1, 0.1]))[0] == 1.0
+
+
+def test_analyzer_constructs_and_loads_bundles(tmp_path, monkeypatch):
+    """Guards the constructor wiring: bundle properties must work (no model files needed)."""
+    import config
+    from forensics.analyzer import ForensicAnalyzer
+
+    monkeypatch.setattr(config, "HEARSAY_MODEL_PATH", tmp_path / "missing.joblib")
+    monkeypatch.setattr(config, "HEARSAY_LIVE_MODEL_PATH", tmp_path / "missing_live.joblib")
+    a = ForensicAnalyzer()
+    assert a.bundle is None and a.fast_bundle is None
+    assert hasattr(a, "transcriber") and isinstance(a.extra_embedders, list)

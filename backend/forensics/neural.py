@@ -74,8 +74,9 @@ class Embedder:
     Middle layers of wav2vec2/WavLM carry the most spoofing-relevant information."""
 
     def __init__(self, model_id: str = "microsoft/wavlm-base-plus", layers: tuple[int, ...] = (3, 4, 5, 6, 7, 8),
-                 force_cpu: bool = False):
+                 force_cpu: bool = False, prefix: str = "emb", drift: bool = True):
         self.model_id, self.layers, self.force_cpu = model_id, layers, force_cpu
+        self.prefix, self.drift = prefix, drift
         self._model = self._fe = None
         self._lock = threading.Lock()
 
@@ -99,6 +100,20 @@ class Embedder:
                 hidden = self._model(**inputs, output_hidden_states=True).hidden_states
             h = torch.stack([hidden[i][0] for i in self.layers]).mean(dim=0)  # (time, dim)
             mean, std = h.mean(dim=0).cpu().numpy(), h.std(dim=0).cpu().numpy()
-        feats = {f"emb_mean_{i}": float(v) for i, v in enumerate(mean)}
-        feats.update({f"emb_std_{i}": float(v) for i, v in enumerate(std)})
+            # Voice consistency: compare the embedding of each third of the clip with the others.
+            thirds = [c.mean(dim=0) for c in torch.tensor_split(h, 3, dim=0) if c.shape[0] > 0]
+            sims = [float(torch.nn.functional.cosine_similarity(a, b, dim=0))
+                    for i, a in enumerate(thirds) for b in thirds[i + 1 :]]
+        feats = {f"{self.prefix}_mean_{i}": float(v) for i, v in enumerate(mean)}
+        feats.update({f"{self.prefix}_std_{i}": float(v) for i, v in enumerate(std)})
+        if self.drift:
+            feats["spk_drift_max"] = 1.0 - min(sims) if sims else 0.0
+            feats["spk_drift_mean"] = 1.0 - float(np.mean(sims)) if sims else 0.0
         return feats
+
+
+# Additional self-supervised front-ends: model id -> (layers to pool, feature prefix).
+# XLS-R 300M is the front-end behind many top ASVspoof systems; early-middle layers work best.
+EXTRA_EMBEDDERS = {
+    "facebook/wav2vec2-xls-r-300m": ((5, 6, 7, 8, 9, 10), "xlsr"),
+}

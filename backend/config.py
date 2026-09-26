@@ -53,6 +53,10 @@ FORENSICS_DETECTORS = [
     if m.strip()
 ]
 FORENSICS_EMBEDDING_MODEL = os.getenv("FORENSICS_EMBEDDING_MODEL", "microsoft/wavlm-base-plus")
+# Extra SSL front-ends (comma-separated; see forensics/neural.py EXTRA_EMBEDDERS). Empty = none.
+FORENSICS_EXTRA_EMBEDDINGS = [
+    m.strip() for m in os.getenv("FORENSICS_EXTRA_EMBEDDINGS", "facebook/wav2vec2-xls-r-300m").split(",") if m.strip()
+]
 FORENSICS_ASR_MODEL = os.getenv("FORENSICS_ASR_MODEL", "openai/whisper-base.en")
 FORENSICS_ASR_ENABLED = not _env_bool("FORENSICS_ASR_DISABLED")
 # Live Shield engine: "hearsay" = trained live model (embeddings + signal features, falls back to
@@ -64,6 +68,10 @@ FORENSICS_WARMUP = not _env_bool("FORENSICS_WARMUP_DISABLED")  # preload at star
 FORENSICS_WINDOW_SECONDS = 4.0
 FORENSICS_HOP_SECONDS = 3.0
 FORENSICS_MAX_WINDOWS = 20
+# Orchestration: when the fast model (embeddings + signal features) is already confident,
+# skip the expensive 5-detector ensemble. Thresholds are on P(synthetic).
+FORENSICS_CASCADE = not _env_bool("FORENSICS_CASCADE_DISABLED")
+CASCADE_LOW, CASCADE_HIGH = 0.03, 0.97
 HEARSAY_MODEL_PATH = Path(os.getenv("HEARSAY_MODEL_PATH", str(BASE_DIR / "models" / "hearsay.joblib")))
 
 # --- Storage / integrations ---

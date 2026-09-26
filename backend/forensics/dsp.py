@@ -160,11 +160,73 @@ def _continuity(y: np.ndarray, feats: dict) -> dict:
     return _technique("signal:continuity", "Splice check", "No abrupt changes in sound character between segments.", 0.1)
 
 
+def _seams(y: np.ndarray, feats: dict) -> dict:
+    """Splice cues beyond the spectral envelope: DC-offset jumps and phase breaks between segments."""
+    import librosa
+
+    seg = SR // 4
+    dc = np.array([y[i : i + seg].mean() for i in range(0, max(seg, y.size - seg + 1), seg)])
+    S = librosa.stft(y, n_fft=512, hop_length=HOP)
+    phase = np.unwrap(np.angle(S), axis=1)
+    # Instantaneous-frequency deviation per frame; a splice shows up as a spike across many bins.
+    dev = np.abs(np.diff(phase, n=2, axis=1)).mean(axis=0) if phase.shape[1] > 2 else np.zeros(1)
+    phase_jump = float(dev.max() / (np.median(dev) + EPS))
+    dc_spread = float(np.std(dc)) if dc.size > 1 else 0.0
+    feats.update(dc_offset_mean=float(y.mean()), dc_offset_spread=dc_spread, phase_jump_max=phase_jump)
+    if phase_jump > 6 or dc_spread > 0.01:
+        return _technique("signal:seams", "Phase & DC seams",
+                          "Found an abrupt phase break or DC-offset jump, a classic sign of audio being cut and joined.",
+                          0.4)
+    return _technique("signal:seams", "Phase & DC seams", "Phase and DC offset are continuous across the clip.", 0.1)
+
+
+def _enf(y: np.ndarray, feats: dict) -> dict:
+    """Electrical network frequency: real recordings near mains power often carry a faint 50/60 Hz hum."""
+    from scipy.signal import welch
+
+    freqs, psd = welch(y, fs=SR, nperseg=min(y.size, SR * 2))
+    band = (freqs >= 35) & (freqs <= 135)
+    ref = float(np.median(psd[band])) + EPS
+
+    def peak(f0: float) -> float:
+        near = (freqs >= f0 - 1) & (freqs <= f0 + 1)
+        return float(psd[near].max() / ref) if near.any() else 0.0
+
+    r50, r60 = peak(50) + peak(100), peak(60) + peak(120)
+    feats.update(enf_50_ratio=r50, enf_60_ratio=r60)
+    if max(r50, r60) > 20:
+        hz = 60 if r60 > r50 else 50
+        return _technique("signal:enf", "Mains hum (ENF)",
+                          f"A {hz} Hz mains-hum trace is present, typical of a real device recording near power lines.")
+    return _technique("signal:enf", "Mains hum (ENF)",
+                      "No mains-hum trace. Common for both clean studio audio and generated audio, so not a cue alone.")
+
+
+def _compression(y: np.ndarray, feats: dict) -> dict:
+    """Transcoding traces: lossy codecs zero out high bands intermittently ('spectral holes')."""
+    import librosa
+
+    S = np.abs(librosa.stft(y, n_fft=512, hop_length=HOP)) ** 2
+    freqs = librosa.fft_frequencies(sr=SR, n_fft=512)
+    hi = S[(freqs > 4500) & (freqs < 7000)]
+    mid = S[(freqs > 500) & (freqs < 3000)].mean(axis=0) + EPS
+    loud = mid > np.percentile(mid, 50)
+    holes = float(np.mean((hi[:, loud] < 1e-7 * mid[loud]).mean(axis=0))) if loud.any() else 0.0
+    rolloff = librosa.feature.spectral_rolloff(S=np.sqrt(S), sr=SR, roll_percent=0.99)[0]
+    feats.update(hf_hole_ratio=holes, rolloff99_std=float(np.std(rolloff[loud])) if loud.any() else 0.0)
+    if holes > 0.3:
+        return _technique("signal:compression", "Compression traces",
+                          "High-frequency bands drop out in bursts, typical of low-bitrate re-encoding (which can also "
+                          "be used to hide synthesis artifacts).", 0.3)
+    return _technique("signal:compression", "Compression traces", "No strong signs of lossy re-encoding.")
+
+
 def analyze(d: DecodedAudio) -> tuple[dict[str, float], list[dict]]:
     feats: dict[str, float] = {
         "duration_s": d.duration, "native_rate": float(d.native_rate), "lossy": float(d.lossy),
     }
     y = d.audio
-    techniques = [_silence(d, feats), _bandwidth(d, feats), _noise_floor(y, feats), _prosody(y, feats), _continuity(y, feats)]
+    techniques = [_silence(d, feats), _bandwidth(d, feats), _noise_floor(y, feats), _prosody(y, feats),
+                  _continuity(y, feats), _seams(y, feats), _enf(y, feats), _compression(y, feats)]
     _spectral(y, feats)
     return feats, techniques

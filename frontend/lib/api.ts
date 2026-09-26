@@ -83,7 +83,7 @@ export interface VerityEvent {
 
 export interface ForensicTechnique {
   id: string;
-  kind: "neural_detector" | "signal";
+  kind: "neural_detector" | "signal" | "metadata";
   name: string;
   score: number | null;
   finding: string;
@@ -104,6 +104,15 @@ export interface ForensicReport {
   summary: string;
   techniques?: ForensicTechnique[];
   transcript?: { text: string; cues: { category: string; phrase: string }[]; scam_language: number } | null;
+  timeline?: { start: number; end: number; score: number | null }[];
+  timeline_source?: string | null;
+  speech_segments?: { start: number; end: number }[];
+  container?: {
+    riff_chunks: string[];
+    tags: Record<string, string>;
+    mac_times: { modified: string; accessed: string; created: string } | null;
+    problem: string | null;
+  };
   steps: string[];
   metadata: {
     duration_s: number;

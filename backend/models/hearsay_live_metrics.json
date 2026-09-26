@@ -1,0 +1,75 @@
+{
+  "version": "hearsay-20260926-2041",
+  "selected": "logreg_all_features",
+  "threshold": 0.3323720057588638,
+  "cv": {
+    "logreg_embeddings_only": {
+      "n": 4279,
+      "accuracy": 0.8936667445664875,
+      "balanced_accuracy": 0.8944207814118562,
+      "auc": 0.9643440957030652,
+      "eer": 0.09768598852227581,
+      "eer_threshold": 0.3244673974582357,
+      "min_dcf": 0.2639571861280757
+    },
+    "logreg_all_features": {
+      "n": 4279,
+      "accuracy": 0.8953026408039262,
+      "balanced_accuracy": 0.8960705403621646,
+      "auc": 0.9662178582199474,
+      "eer": 0.09792419719307144,
+      "eer_threshold": 0.3323720057588638,
+      "min_dcf": 0.25435990551576393
+    },
+    "blend(logreg_all, gboost)": {
+      "n": 4279,
+      "accuracy": 0.8847861649918205,
+      "balanced_accuracy": 0.8860238164962783,
+      "auc": 0.956859317018589,
+      "eer": 0.11521530567198883,
+      "eer_threshold": 0.3861785644867709,
+      "min_dcf": 0.2977598394542243
+    }
+  },
+  "per_class_accuracy": {
+    "devset_freevc": 0.5666666666666667,
+    "devset_mms_tts": 0.7,
+    "devset_partial_splice": 0.6333333333333333,
+    "devset_sapi_tts": 1.0,
+    "devset_xtts_clone": 0.775,
+    "diffgan_tts": 0.99,
+    "elevenlabs": 0.875,
+    "grad_tts": 0.67,
+    "none": 0.9018580276322058,
+    "openvoicev2": 0.965,
+    "playht": 0.91,
+    "pro_diff": 0.98,
+    "unit_speech": 0.98,
+    "wavegrad2": 0.8,
+    "xtts_v2": 0.99,
+    "your_tts": 1.0
+  },
+  "type_model": {
+    "accuracy": 0.9669724770642202,
+    "per_type_recall": {
+      "devset_freevc": 0.8,
+      "devset_mms_tts": 0.975,
+      "devset_partial_splice": 0.6666666666666666,
+      "devset_sapi_tts": 1.0,
+      "devset_xtts_clone": 0.625,
+      "diffgan_tts": 0.995,
+      "elevenlabs": 0.965,
+      "grad_tts": 0.995,
+      "openvoicev2": 0.99,
+      "playht": 0.945,
+      "pro_diff": 0.995,
+      "unit_speech": 0.99,
+      "wavegrad2": 1.0,
+      "xtts_v2": 0.94,
+      "your_tts": 0.985
+    }
+  },
+  "n_train": 4279,
+  "technique_families": [],
+  "cv_grouping": "group"
+}

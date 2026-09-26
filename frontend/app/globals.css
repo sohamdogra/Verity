@@ -90,3 +90,62 @@
     @apply font-heading tracking-tight;
   }
 }
+
+/* ---- Accessibility preferences (set on <html> by the Display menu) ---- */
+html[data-text="lg"] {
+  font-size: 21px;
+}
+html[data-text="xl"] {
+  font-size: 24px;
+}
+/* With large text, the header keeps short labels so it never wraps. */
+html[data-text] .nav-full {
+  display: none;
+}
+html[data-text] .nav-short {
+  display: inline;
+}
+/* Large text on a mid-size window: use the bottom tab bar until the full header fits. */
+@media (max-width: 1279px) {
+  html[data-text] .desktop-nav {
+    display: none;
+  }
+  html[data-text] .tab-bar {
+    display: block;
+  }
+  html[data-text] .site-footer {
+    padding-bottom: 7rem;
+  }
+}
+:root[data-contrast="high"] {
+  --background: #fffdf8;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --muted: #eee7dc;
+  --muted-foreground: #2b2622;
+  --secondary: #e8dfd1;
+  --accent: #e8dfd1;
+  --border: #5c5248;
+  --input: #2b2622;
+  --primary: #184a3f;
+  --ring: #000000;
+  --safe: #1d6337;
+  --safe-soft: #d7ecdd;
+  --caution: #7a4f00;
+  --caution-soft: #f7e6bf;
+  --concern: #8f1f0c;
+  --concern-soft: #f6d6ce;
+}
+:root[data-contrast="high"] *:focus-visible {
+  outline: 3px solid #000;
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
