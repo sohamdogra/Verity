@@ -60,8 +60,31 @@ def test_single_window_never_reaches_red():
 
 
 def test_alert_payload_formats():
-    from alerts import _payload
+    from alerts import _webhook_payload
 
-    assert _payload("https://discord.com/api/webhooks/1/abc", "hi", {"x": 1}) == {"content": "hi"}
-    assert _payload("https://hooks.slack.com/services/T/B/C", "hi", {"x": 1}) == {"text": "hi"}
-    assert _payload("https://example.com/hook", "hi", {"x": 1}) == {"message": "hi", "x": 1}
+    assert _webhook_payload("https://discord.com/api/webhooks/1/abc", "hi", {"x": 1}) == {"content": "hi"}
+    assert _webhook_payload("https://hooks.slack.com/services/T/B/C", "hi", {"x": 1}) == {"text": "hi"}
+    assert _webhook_payload("https://example.com/hook", "hi", {"x": 1}) == {"message": "hi", "x": 1}
+
+
+def test_phone_normalization():
+    from alerts import display_name, extract_phone, to_e164
+
+    assert to_e164("+1 404 555 0199") == "+14045550199"
+    assert to_e164("(404) 555-0199") == "+14045550199"  # US number without a country code
+    assert to_e164("00447700900123") == "+447700900123"  # international prefix
+    assert to_e164("12345") is None and to_e164("") is None and to_e164(None) is None
+    assert extract_phone("Maya (daughter) +1 404 555 0199") == "+14045550199"
+    assert extract_phone("Maya") is None
+    assert display_name("Maya (daughter) +1 404 555 0199") == "Maya (daughter)"
+    assert display_name(None) == "your family"
+
+
+def test_alert_falls_back_when_sms_not_configured(monkeypatch):
+    import alerts
+    import config
+
+    monkeypatch.setattr(config, "TWILIO_ACCOUNT_SID", "")
+    monkeypatch.setattr(config, "ALERT_WEBHOOK_URL", None)
+    assert not alerts.sms_configured()
+    assert alerts.send_alert("hi", {}, to_number="+14045550199") == ("simulated", None)

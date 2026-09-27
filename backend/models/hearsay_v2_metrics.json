@@ -1,0 +1,180 @@
+{
+  "version": "hearsay-20260926-2228",
+  "selected": "logreg_all_features",
+  "threshold": 0.1974192984035572,
+  "cv": {
+    "detectors_only (baseline)": {
+      "n": 4279,
+      "accuracy": 0.5583080158915634,
+      "balanced_accuracy": 0.5588135022793729,
+      "auc": 0.5900846187131488,
+      "eer": 0.43515391776774437,
+      "eer_threshold": 0.4889434784311729,
+      "min_dcf": 0.943821591383777
+    },
+    "logreg_embeddings_only": {
+      "n": 4279,
+      "accuracy": 0.8936667445664875,
+      "balanced_accuracy": 0.8944207814118562,
+      "auc": 0.9643440957030652,
+      "eer": 0.09768598852227581,
+      "eer_threshold": 0.3244673974582357,
+      "min_dcf": 0.2639571861280757
+    },
+    "logreg_all_features": {
+      "n": 4279,
+      "accuracy": 0.91493339565319,
+      "balanced_accuracy": 0.9159738582374306,
+      "auc": 0.9813038974435183,
+      "eer": 0.07781883902775895,
+      "eer_threshold": 0.1974192984035572,
+      "min_dcf": 0.19121493914907994
+    },
+    "logreg_no_detectors": {
+      "n": 4279,
+      "accuracy": 0.9142322972657163,
+      "balanced_accuracy": 0.9152769339703049,
+      "auc": 0.9812118920761742,
+      "eer": 0.0764161396208767,
+      "eer_threshold": 0.20441491481263277,
+      "min_dcf": 0.19483683486550735
+    },
+    "gboost_signal+detectors": {
+      "n": 4279,
+      "accuracy": 0.8829165692918907,
+      "balanced_accuracy": 0.8842332084741096,
+      "auc": 0.9406810145503975,
+      "eer": 0.11685621374966675,
+      "eer_threshold": 0.21233215299270566,
+      "min_dcf": 0.3094399942055663
+    },
+    "blend(logreg_all, gboost)": {
+      "n": 4279,
+      "accuracy": 0.9076887123159617,
+      "balanced_accuracy": 0.9088991699848333,
+      "auc": 0.9719012111490399,
+      "eer": 0.08997556722073854,
+      "eer_threshold": 0.22550351964293344,
+      "min_dcf": 0.23922944021898965
+    }
+  },
+  "per_class_accuracy": {
+    "devset_freevc": 0.6666666666666666,
+    "devset_mms_tts": 0.875,
+    "devset_partial_splice": 0.7,
+    "devset_sapi_tts": 1.0,
+    "devset_xtts_clone": 1.0,
+    "diffgan_tts": 1.0,
+    "elevenlabs": 0.9,
+    "grad_tts": 0.485,
+    "none": 0.9223439733206289,
+    "openvoicev2": 1.0,
+    "playht": 0.98,
+    "pro_diff": 1.0,
+    "unit_speech": 1.0,
+    "wavegrad2": 0.905,
+    "xtts_v2": 1.0,
+    "your_tts": 1.0
+  },
+  "type_model": {
+    "accuracy": 0.9839449541284404,
+    "per_type_recall": {
+      "devset_freevc": 0.9666666666666667,
+      "devset_mms_tts": 0.975,
+      "devset_partial_splice": 0.7333333333333333,
+      "devset_sapi_tts": 1.0,
+      "devset_xtts_clone": 0.725,
+      "diffgan_tts": 0.995,
+      "elevenlabs": 0.99,
+      "grad_tts": 1.0,
+      "openvoicev2": 0.99,
+      "playht": 0.995,
+      "pro_diff": 1.0,
+      "unit_speech": 0.995,
+      "wavegrad2": 1.0,
+      "xtts_v2": 0.965,
+      "your_tts": 1.0
+    }
+  },
+  "n_train": 4279,
+  "technique_families": [
+    {
+      "family": "Self-supervised embeddings (XLS-R 300M)",
+      "features": 2048,
+      "min_dcf": 0.22572890916663182,
+      "eer": 0.08529990253113101,
+      "auc": 0.9744657788112295
+    },
+    {
+      "family": "Self-supervised embeddings (WavLM)",
+      "features": 1536,
+      "min_dcf": 0.26833073478789443,
+      "eer": 0.10002382086707956,
+      "auc": 0.9629268633818638
+    },
+    {
+      "family": "Spectral statistics + MFCC",
+      "features": 72,
+      "min_dcf": 0.6184740034104738,
+      "eer": 0.24631902041601286,
+      "auc": 0.8282712169622056
+    },
+    {
+      "family": "ENF mains hum",
+      "features": 2,
+      "min_dcf": 0.881933792350723,
+      "eer": 0.43187210161238865,
+      "auc": 0.6091677557246571
+    },
+    {
+      "family": "Deep-learning anti-spoofing detectors (5 models)",
+      "features": 20,
+      "min_dcf": 0.9460372130022597,
+      "eer": 0.4358508420348703,
+      "auc": 0.58990366753937
+    },
+    {
+      "family": "Compression / transcoding traces",
+      "features": 3,
+      "min_dcf": 0.9862007558988646,
+      "eer": 0.48352492012360626,
+      "auc": 0.5050233619329432
+    },
+    {
+      "family": "Speaker-embedding drift",
+      "features": 2,
+      "min_dcf": 0.986705770768955,
+      "eer": 0.42346475604372547,
+      "auc": 0.6062707886236783
+    },
+    {
+      "family": "Prosody (pitch, jitter, voicing)",
+      "features": 4,
+      "min_dcf": 0.9972849831130971,
+      "eer": 0.44870449449497574,
+      "auc": 0.5520306742835164
+    },
+    {
+      "family": "Noise floor & dynamics",
+      "features": 5,
+      "min_dcf": 1.0,
+      "eer": 0.4877330183442531,
+      "auc": 0.5331263030451372
+    },
+    {
+      "family": "Digital silence",
+      "features": 2,
+      "min_dcf": 1.0,
+      "eer": 0.4853951859994493,
+      "auc": 0.5228317547455975
+    },
+    {
+      "family": "Splice / seams (envelope, DC, phase)",
+      "features": 4,
+      "min_dcf": 1.0,
+      "eer": 0.4377211079107133,
+      "auc": 0.58230437386086
+    }
+  ],
+  "cv_grouping": "group"
+}

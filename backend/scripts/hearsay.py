@@ -49,14 +49,17 @@ FEATURE_SETS = {
     "all": lambda n: n not in FORMAT_FEATURES,
     "no-embeddings": lambda n: n not in FORMAT_FEATURES and not n.startswith("emb_"),
     # Fast enough for Live Shield: no detector ensemble, just embeddings + signal features.
-    "live": lambda n: n not in FORMAT_FEATURES and not n.startswith(("det_", "xlsr_")),
-    "no-extra-embeddings": lambda n: n not in FORMAT_FEATURES and not n.startswith("xlsr_"),
+    # The live model must stay fast: base WavLM + signal features only.
+    "live": lambda n: n not in FORMAT_FEATURES and not n.startswith(("det_", "xlsr_", "wlml_")),
+    "no-extra-embeddings": lambda n: n not in FORMAT_FEATURES and not n.startswith(("xlsr_", "wlml_")),
+    "no-detectors": lambda n: n not in FORMAT_FEATURES and not n.startswith("det_"),
 }
 # Technique families, for the "what worked / what had no effect" report.
 FAMILIES = {
     "Deep-learning anti-spoofing detectors (5 models)": ("det_",),
     "Self-supervised embeddings (WavLM)": ("emb_mean_", "emb_std_"),
     "Self-supervised embeddings (XLS-R 300M)": ("xlsr_",),
+    "Self-supervised embeddings (WavLM-large)": ("wlml_",),
     "Speaker-embedding drift": ("spk_drift",),
     "Spectral statistics + MFCC": ("spec_", "mfcc"),
     "Prosody (pitch, jitter, voicing)": ("f0_", "jitter", "voiced_ratio"),
@@ -68,20 +71,24 @@ FAMILIES = {
 }
 
 
-def _signature(embeddings: bool) -> dict:
-    return {"detectors": config.FORENSICS_DETECTORS, "embedding": config.FORENSICS_EMBEDDING_MODEL if embeddings else None,
+def _signature(embeddings: bool, detectors: bool = True) -> dict:
+    return {"detectors": config.FORENSICS_DETECTORS if detectors else [], "embedding": config.FORENSICS_EMBEDDING_MODEL if embeddings else None,
             "window": config.FORENSICS_WINDOW_SECONDS, "hop": config.FORENSICS_HOP_SECONDS}
 
 
 def featurize(paths: list[Path], embeddings: bool = True, threads: int | None = None,
-              extra: bool | set[str] = False, base: bool = True) -> list[dict | None]:
-    """Base features (+ optional extra SSL embeddings), each cached separately by content hash."""
+              extra: bool | set[str] = False, base: bool = True, detectors: bool = True) -> list[dict | None]:
+    """Base features (+ optional extra SSL embeddings), each cached separately by content hash.
+
+    detectors=False skips the 5-detector ensemble (about 80% of the compute) and reuses any
+    full cached result by dropping its det_* features."""
     if threads:
         import torch
 
         torch.set_num_threads(threads)
     analyzer = get_analyzer()
-    cache = FeatureCache(CACHE_DIR, _signature(embeddings))
+    cache = FeatureCache(CACHE_DIR, _signature(embeddings, detectors))
+    full_cache = None if detectors else FeatureCache(CACHE_DIR, _signature(embeddings, True))
     extra_embedders = [e for e in analyzer.extra_embedders
                        if extra is True or (isinstance(extra, set) and e.prefix in extra)]
     extra_caches = [(e, FeatureCache(CACHE_DIR, {"embedding": e.model_id, "layers": list(e.layers)}))
@@ -92,11 +99,15 @@ def featurize(paths: list[Path], embeddings: bool = True, threads: int | None = 
     for i, path in enumerate(paths, 1):
         data = path.read_bytes()
         feats = cache.get(data) if base else {}
+        if feats is None and full_cache is not None:
+            full = full_cache.get(data)
+            if full is not None:
+                feats = {k: v for k, v in full.items() if not k.startswith("det_")}
         decoded = None
         if feats is None:
             try:
                 decoded = decode_any(data, path.name)
-                feats, _, _ = analyzer.extract(decoded, embeddings=embeddings)
+                feats, _, _ = analyzer.extract(decoded, embeddings=embeddings, detectors=detectors)
                 cache.put(data, feats)
                 fresh += 1
             except Exception as exc:
@@ -193,7 +204,7 @@ def cmd_train(args) -> None:
     rows, paths = zip(*[(r, p) for r, p in zip(rows, paths) if p is not None])
     print(f"Training on {len(rows)} files ({sum(r['y'] for r in rows)} synthetic).")
     feats = featurize(list(paths), embeddings=not args.no_embeddings, threads=args.threads,
-                      extra=not args.no_extra_embeddings)
+                      extra=not args.no_extra_embeddings, detectors=not args.no_detectors)
     keep = [i for i, f in enumerate(feats) if f is not None]
     rows, feats = [rows[i] for i in keep], [feats[i] for i in keep]
     names = sorted(k for k in {k for f in feats for k in f} if FEATURE_SETS[args.feature_set](k))
@@ -295,7 +306,8 @@ def predict_paths(paths: list[Path], model_path: Path, threads: int | None = Non
             if i % 10 == 0:
                 print(f"  {i}/{len(paths)}", flush=True)
         return out
-    feats = featurize(paths, embeddings=bundle.uses_embeddings, threads=threads, extra=bundle.extra_prefixes)
+    feats = featurize(paths, embeddings=bundle.uses_embeddings, threads=threads, extra=bundle.extra_prefixes,
+                      detectors=bundle.data.get("uses_detectors", True))
     for path, f in zip(paths, feats):
         if f is None:
             out.append({"path": path, "p": 0.5, "type": "unknown", "threshold": bundle.threshold})
@@ -347,7 +359,8 @@ def cmd_extract(args) -> None:
     mine = paths[args.shard :: args.shards]
     print(f"Shard {args.shard + 1}/{args.shards}: extracting features for {len(mine)} of {len(paths)} files ...")
     featurize(mine, embeddings=not args.no_embeddings, threads=args.threads,
-              extra=args.extra_embeddings or args.only_extra, base=not args.only_extra)
+              extra=args.extra_embeddings or args.only_extra, base=not args.only_extra,
+              detectors=not args.no_detectors)
 
 
 def cmd_evaluate(args) -> None:
@@ -396,6 +409,7 @@ def main() -> None:
     t.add_argument("--threads", type=int, help="Torch CPU threads")
     t.add_argument("--skip-family-report", action="store_true")
     t.add_argument("--no-extra-embeddings", action="store_true", help="Don't compute/use the extra SSL front-ends")
+    t.add_argument("--no-detectors", action="store_true", help="Skip the pretrained detector ensemble (5x faster)")
     t.set_defaults(fn=cmd_train)
 
     x = sub.add_parser("extract", help="Pre-compute cached features (run shards in parallel)")
@@ -406,6 +420,7 @@ def main() -> None:
     x.add_argument("--no-embeddings", action="store_true")
     x.add_argument("--extra-embeddings", action="store_true", help="Also compute the extra SSL front-ends (XLS-R)")
     x.add_argument("--only-extra", action="store_true", help="Compute only the extra SSL front-ends")
+    x.add_argument("--no-detectors", action="store_true", help="Skip the pretrained detector ensemble (5x faster)")
     x.set_defaults(fn=cmd_extract)
 
     p = sub.add_parser("predict")

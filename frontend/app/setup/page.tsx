@@ -27,6 +27,7 @@ function draftFrom(family: Family | null): {
   safeWord: string;
   trustedPhone: string;
   alertContact: string;
+  alertPhone: string;
   challenges: ChallengeDraft[];
 } {
   return {
@@ -34,6 +35,7 @@ function draftFrom(family: Family | null): {
     safeWord: "",
     trustedPhone: family?.trusted_phone ?? "",
     alertContact: family?.alert_contact ?? "",
+    alertPhone: family?.alert_phone ?? "",
     challenges: family?.challenges.length
       ? family.challenges.map((c) => ({ id: c.id, question: c.question, answer: "" }))
       : [
@@ -87,6 +89,7 @@ export default function SetupPage() {
         safe_word: draft.safeWord || undefined,
         trusted_phone: draft.trustedPhone,
         alert_contact: draft.alertContact,
+        alert_phone: draft.alertPhone || undefined,
         challenges: draft.challenges.map((c) => ({
           id: c.id,
           question: c.question,
@@ -176,9 +179,27 @@ export default function SetupPage() {
               <Input
                 id="alert-contact"
                 required
-                placeholder="Maya (daughter) · +1 404 555 0199"
+                placeholder="Maya (daughter)"
                 value={draft.alertContact}
                 onChange={(e) => set({ alertContact: e.target.value })}
+              />
+            </Field>
+
+            <Field
+              id="alert-phone"
+              label="Their mobile number"
+              hint={
+                family?.sms_ready
+                  ? "Verity will text this number when you tap Alert family."
+                  : "Used to text them during a suspicious call. Optional, but recommended."
+              }
+            >
+              <Input
+                id="alert-phone"
+                type="tel"
+                placeholder="+1 404 555 0199"
+                value={draft.alertPhone}
+                onChange={(e) => set({ alertPhone: e.target.value })}
               />
             </Field>
 

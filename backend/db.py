@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS families (
     safe_word_hash  TEXT NOT NULL,
     trusted_phone   TEXT NOT NULL,
     alert_contact   TEXT NOT NULL,
+    alert_phone     TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
@@ -68,6 +69,10 @@ def init_db() -> None:
     config.DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        # Migration for databases created before SMS alerts existed.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(families)")}
+        if "alert_phone" not in columns:
+            conn.execute("ALTER TABLE families ADD COLUMN alert_phone TEXT")
 
 
 # ---- families -------------------------------------------------------------------

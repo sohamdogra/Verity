@@ -108,6 +108,7 @@ class FamilyIn(BaseModel):
     safe_word: str | None = Field(default=None, max_length=100)
     trusted_phone: str = Field(min_length=3, max_length=40)
     alert_contact: str = Field(min_length=2, max_length=120)
+    alert_phone: str | None = Field(default=None, max_length=40)
     challenges: list[ChallengeIn] = Field(min_length=2, max_length=3)
 
     @field_validator("name", "trusted_phone", "alert_contact")
@@ -130,6 +131,8 @@ class FamilyOut(BaseModel):
     name: str
     trusted_phone: str
     alert_contact: str
+    alert_phone: str | None
+    sms_ready: bool  # true when a real text can actually be sent to this family
     safe_word_configured: bool
     challenges: list[ChallengeOut]
     created_at: str
@@ -162,9 +165,11 @@ class AlertIn(BaseModel):
 
 class AlertOut(BaseModel):
     event_id: int
-    delivery: Literal["simulated", "webhook", "webhook_failed"]
+    delivery: Literal["simulated", "sms", "sms_failed", "webhook", "webhook_failed", "cooldown"]
     alert_contact: str | None
+    alert_phone: str | None
     message: str
+    error: str | None = None
     timestamp: str
 
 
@@ -185,13 +190,21 @@ class EventOut(BaseModel):
     notes: str | None
 
 
+def _alert_number(row) -> str | None:
+    """The number to text: the dedicated field, else a number typed into the contact line."""
+    return alerts.to_e164(row["alert_phone"]) or alerts.extract_phone(row["alert_contact"])
+
+
 def _family_out(conn, row) -> FamilyOut:
     challenges = db.get_challenges(conn, row["id"])
+    number = _alert_number(row)
     return FamilyOut(
         id=row["id"],
         name=row["name"],
         trusted_phone=row["trusted_phone"],
         alert_contact=row["alert_contact"],
+        alert_phone=number,
+        sms_ready=bool(number) and alerts.sms_configured(),
         safe_word_configured=bool(row["safe_word_hash"]),
         challenges=[ChallengeOut(index=i, id=c["id"], question=c["question"]) for i, c in enumerate(challenges)],
         created_at=row["created_at"],
@@ -371,23 +384,30 @@ def upsert_family(body: FamilyIn):
             else:
                 raise HTTPException(422, f'Please add an answer for "{item.question}".')
 
+        # Accept whatever the family typed, but store a dialable number when we can find one.
+        alert_phone = alerts.to_e164(body.alert_phone) or alerts.extract_phone(body.alert_contact)
+        if body.alert_phone and body.alert_phone.strip() and not alert_phone:
+            raise HTTPException(422, "That alert phone number doesn't look complete.")
+
         if existing is None:
             cur = conn.execute(
-                """INSERT INTO families (name, safe_word_hash, trusted_phone, alert_contact, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (body.name, hash_secret(safe_word), body.trusted_phone, body.alert_contact, now, now),
+                """INSERT INTO families (name, safe_word_hash, trusted_phone, alert_contact, alert_phone,
+                                         created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (body.name, hash_secret(safe_word), body.trusted_phone, body.alert_contact, alert_phone, now, now),
             )
             family_id = cur.lastrowid
         else:
             family_id = existing["id"]
             conn.execute(
                 """UPDATE families SET name = ?, safe_word_hash = ?, trusted_phone = ?,
-                   alert_contact = ?, updated_at = ? WHERE id = ?""",
+                   alert_contact = ?, alert_phone = ?, updated_at = ? WHERE id = ?""",
                 (
                     body.name,
                     hash_secret(safe_word) if safe_word else existing["safe_word_hash"],
                     body.trusted_phone,
                     body.alert_contact,
+                    alert_phone,
                     now,
                     family_id,
                 ),
@@ -479,13 +499,29 @@ def verify(body: VerifyIn):
 # ---- alerts & events ----------------------------------------------------------------
 
 
-def _alert_note(family, delivery: str) -> str:
-    who = family["alert_contact"] if family else "your family"
+def _alert_note(who: str, delivery: str) -> str:
+    if delivery == "sms" and config.TWILIO_TRIAL_TEMPLATE:
+        return f"Text message sent to {who} (Twilio trial template stands in for the wording below)."
     return {
+        "sms": f"Text message sent to {who}.",
+        "sms_failed": f"Alert for {who} recorded, but the text message couldn't be sent.",
+        "cooldown": f"Alert for {who} recorded (a text was already sent moments ago).",
         "simulated": f"Alert for {who} recorded (demo mode, no message sent).",
         "webhook": f"Alert sent to {who}.",
         "webhook_failed": f"Alert for {who} recorded, but the message channel couldn't be reached.",
     }[delivery]
+
+
+def _alert_text(family_name: str) -> str:
+    """Deliberately plain: no links (they read as phishing) and never the safe-word."""
+    when = datetime.now().strftime("%I:%M %p").lstrip("0")
+    return (
+        f"Verity alert: a call to {family_name} at {when} showed signs of an AI-generated voice. "
+        "Please check in with them using a number you already know."
+    )
+
+
+_last_alert: dict[int | None, float] = {}  # family id -> when we last actually sent a message
 
 
 @app.post("/alert", response_model=AlertOut)
@@ -493,29 +529,42 @@ def alert(body: AlertIn):
     with db.connect() as conn:
         family = db.get_family(conn, body.family_id) if body.family_id is not None else None
         family_name = family["name"] if family else "your family"
-        message = (
-            f"Verity alert for {family_name}: a possibly suspicious call is happening right now. "
-            f"Please check in using a number you trust."
-        )
-        delivery = alerts.send_alert(
-            message,
-            {
-                "family": family_name,
-                "alert_contact": family["alert_contact"] if family else None,
-                "reason": body.reason,
-                "band": body.band,
-            },
-        )
+        who = alerts.display_name(family["alert_contact"]) if family else "your family"
+        number = _alert_number(family) if family else None
+        message = _alert_text(family_name)
+
+        key = family["id"] if family else None
+        recent = time.time() - _last_alert.get(key, 0.0) < config.ALERT_COOLDOWN_SECONDS
+        error = None
+        if recent:
+            # Don't text the same contact repeatedly while a call is still going.
+            delivery = "cooldown"
+        else:
+            delivery, error = alerts.send_alert(
+                message,
+                {
+                    "family": family_name,
+                    "alert_contact": family["alert_contact"] if family else None,
+                    "reason": body.reason,
+                    "band": body.band,
+                },
+                to_number=number,
+            )
+            if delivery in ("sms", "webhook"):
+                _last_alert[key] = time.time()
+
         event = db.log_event(
-            conn, family["id"] if family else None, "alert_sent",
+            conn, key, "alert_sent",
             synthetic_likelihood=body.synthetic_likelihood, band=body.band,
-            notes=body.notes or _alert_note(family, delivery),
+            notes=body.notes or _alert_note(who, delivery),
         )
         return AlertOut(
             event_id=event["id"],
             delivery=delivery,
             alert_contact=family["alert_contact"] if family else None,
+            alert_phone=number,
             message=message,
+            error=error,
             timestamp=event["timestamp"],
         )
 

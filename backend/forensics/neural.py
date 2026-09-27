@@ -116,4 +116,6 @@ class Embedder:
 # XLS-R 300M is the front-end behind many top ASVspoof systems; early-middle layers work best.
 EXTRA_EMBEDDERS = {
     "facebook/wav2vec2-xls-r-300m": ((5, 6, 7, 8, 9, 10), "xlsr"),
+    # WavLM-large: 24 layers; the middle block carries the most spoofing cues.
+    "microsoft/wavlm-large": ((8, 9, 10, 11, 12, 13), "wlml"),
 }

@@ -38,6 +38,8 @@ export interface Family {
   name: string;
   trusted_phone: string;
   alert_contact: string;
+  alert_phone: string | null;
+  sms_ready: boolean;
   safe_word_configured: boolean;
   challenges: Challenge[];
   created_at: string;
@@ -50,6 +52,7 @@ export interface FamilyInput {
   safe_word?: string;
   trusted_phone: string;
   alert_contact: string;
+  alert_phone?: string | null;
   challenges: { id?: number; question: string; answer?: string }[];
 }
 
@@ -64,9 +67,11 @@ export interface VerifyResult {
 
 export interface AlertResult {
   event_id: number;
-  delivery: "simulated" | "webhook" | "webhook_failed";
+  delivery: "simulated" | "sms" | "sms_failed" | "webhook" | "webhook_failed" | "cooldown";
   alert_contact: string | null;
+  alert_phone: string | null;
   message: string;
+  error?: string | null;
   timestamp: string;
 }
 

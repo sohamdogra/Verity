@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { BellRing, CheckCircle2, Loader2 } from "lucide-react";
+import { BellRing, CheckCircle2, Loader2, MessageSquare } from "lucide-react";
 import { TrustedCallLink } from "@/components/protect-actions";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -12,7 +12,10 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const DELIVERY_NOTE: Record<string, string> = {
-  simulated: "Demo mode: the alert was recorded in Verity. Add ALERT_WEBHOOK_URL to deliver it as a real message.",
+  sms: "A text message was sent to their phone. On a Twilio trial account the phone shows Twilio's own template text instead of the wording above; that is a billing tier limit, not a Verity one.",
+  sms_failed: "We couldn't send the text, but the alert was recorded. Use the button below to send it yourself.",
+  cooldown: "A text was already sent moments ago, so we didn't send another.",
+  simulated: "Demo mode: the alert was recorded in Verity. Use the button below to text them yourself.",
   webhook: "Delivered to your family's alert channel.",
   webhook_failed: "We couldn't reach the alert channel, but the alert was recorded. Please call them directly.",
 };
@@ -26,6 +29,10 @@ export function AlertConfirmation() {
 
   const eventId = params.get("event");
   const delivery = params.get("delivery") ?? "simulated";
+  // Contact name with any phone number stripped out, e.g. "Maya (daughter) +1 404…" -> "Maya (daughter)".
+  const contactName =
+    family?.alert_contact?.replace(/\+?[\d][\d\s().\-]{6,}\d/, "").replace(/[\s,;|·\-]+$/, "").trim() || "them";
+  const smsText = `Verity alert: a call to ${family?.name ?? "us"} showed signs of an AI-generated voice. Please check in using a number you already know.`;
 
   const send = async () => {
     setSending(true);
@@ -95,6 +102,15 @@ export function AlertConfirmation() {
         </ol>
       </div>
       <div className="flex flex-wrap gap-3">
+        {family?.alert_phone && (
+          <a
+            href={`sms:${family.alert_phone}?&body=${encodeURIComponent(smsText)}`}
+            className={cn(buttonVariants({ size: "lg" }), "min-h-13")}
+          >
+            <MessageSquare />
+            Text {contactName} yourself
+          </a>
+        )}
         {family && <TrustedCallLink family={family} />}
         <Link href="/history" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "min-h-13")}>
           View history

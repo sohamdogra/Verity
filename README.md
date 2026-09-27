@@ -141,7 +141,7 @@ Verity/
 │   ├── audio_io.py              decode WAV → 16 kHz mono, windowing, silence gate
 │   ├── security.py              normalize + PBKDF2-SHA256 hashing of secrets
 │   ├── db.py                    sqlite3 schema & queries
-│   ├── alerts.py                simulated alerts + optional webhook
+│   ├── alerts.py                family alerts: Twilio SMS, webhook, or in-app
 │   ├── detection/
 │   │   ├── detector.py          Detector.analyze(audio) → float  (model-agnostic, live path)
 │   │   ├── labels.py            label normalization → synthetic_likelihood
@@ -203,7 +203,7 @@ Verity/
 | `GET` | `/family/{id}` | – | family |
 | `GET` | `/family/current` | – | most recent family (single-family mode) |
 | `POST` | `/verify` | `{family_id, method: "challenge"\|"safe_word", challenge_index, answer}` | `{passed, locked, attempts_remaining, locked_until, message}` |
-| `POST` | `/alert` | `{family_id, reason?, band?, synthetic_likelihood?, notes?}` | `{event_id, delivery: simulated\|webhook\|webhook_failed, alert_contact, message}` |
+| `POST` | `/alert` | `{family_id, reason?, band?, synthetic_likelihood?, notes?}` | `{event_id, delivery: sms\|webhook\|simulated\|cooldown\|…, alert_contact, alert_phone, message}` |
 | `POST` | `/events` | `{family_id, event_type: "callback_started"}` | event |
 | `GET` | `/events/{family_id}` | – | events, newest first |
 
@@ -226,7 +226,10 @@ curl -F file=@frontend/public/demo-clips/clone.wav -F session_id=test localhost:
 | `DETECTOR_MODELS` | built-in fallback list | Comma-separated HF model ids to try in order |
 | `DETECTOR_DISABLED` | `0` | `1` = demo the "Detection unavailable" state |
 | `FORCE_CPU` | `0` | Ignore CUDA |
-| `ALERT_WEBHOOK_URL` | empty (simulated) | Discord/Slack webhook, Twilio proxy or any JSON endpoint |
+| `ALERT_WEBHOOK_URL` | empty | Discord/Slack webhook or any JSON endpoint |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM_NUMBER` | empty | Send the family alert as a real SMS |
+| `TWILIO_TRIAL_TEMPLATE` | empty | Trial accounts can't send custom text; name a Twilio template (e.g. `sms_internal_alerts`) to demo real delivery |
+| `ALERT_COOLDOWN_SECONDS` | `60` | Minimum gap between texts to one family |
 | `BAND_GREEN_MAX` / `BAND_RED_MIN` | `0.40` / `0.65` | Band thresholds |
 | `SILENCE_RMS` | `0.004` | Windows quieter than this aren't scored |
 | `VERIFY_LOCK_SECONDS` | `300` | Lock length after 5 failed attempts |
@@ -246,7 +249,14 @@ curl -F file=@frontend/public/demo-clips/clone.wav -F session_id=test localhost:
 |---|---|
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` |
 
-**Webhooks:** Discord (`discord.com/api/webhooks/...`) gets `{"content": ...}`, Slack (`hooks.slack.com/...`) gets `{"text": ...}`, anything else gets `{"message", "family", "alert_contact", "reason", "band"}`. If the webhook fails, the alert is still logged in-app.
+### How a family alert is delivered
+
+Verity tries, in order: **Twilio SMS** → **webhook** → **in-app only**. Every attempt is recorded in the family's history either way, so a missing key or a provider outage never costs you the alert.
+
+- **SMS.** Set the three `TWILIO_*` variables and give the family an alert mobile number on `/setup`. The message deliberately contains no links (links in a warning text read as phishing) and never the safe-word.
+- **Trial accounts.** Twilio's free tier rejects custom message text and only accepts the name of one of its predefined templates. Setting `TWILIO_TRIAL_TEMPLATE=sms_internal_alerts` sends a real text that carries Twilio's generic "Alert:" wording instead of ours — useful for a demo. Verity still composes, stores and displays its own wording, and the UI says plainly that the phone is showing Twilio's template. Delete the variable on a paid account and the real wording goes out.
+- **Webhooks.** Discord (`discord.com/api/webhooks/...`) gets `{"content": ...}`, Slack (`hooks.slack.com/...`) gets `{"text": ...}`, anything else gets `{"message", "family", "alert_contact", "reason", "band"}`.
+- **No network at all.** The alert page always offers a "Text them yourself" button that opens the phone's own messaging app with the alert pre-written. It needs no account and no internet.
 
 ---
 

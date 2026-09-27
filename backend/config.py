@@ -55,7 +55,10 @@ FORENSICS_DETECTORS = [
 FORENSICS_EMBEDDING_MODEL = os.getenv("FORENSICS_EMBEDDING_MODEL", "microsoft/wavlm-base-plus")
 # Extra SSL front-ends (comma-separated; see forensics/neural.py EXTRA_EMBEDDERS). Empty = none.
 FORENSICS_EXTRA_EMBEDDINGS = [
-    m.strip() for m in os.getenv("FORENSICS_EXTRA_EMBEDDINGS", "facebook/wav2vec2-xls-r-300m").split(",") if m.strip()
+    m.strip()
+    for m in os.getenv("FORENSICS_EXTRA_EMBEDDINGS",
+                       "facebook/wav2vec2-xls-r-300m,microsoft/wavlm-large").split(",")
+    if m.strip()
 ]
 FORENSICS_ASR_MODEL = os.getenv("FORENSICS_ASR_MODEL", "openai/whisper-base.en")
 FORENSICS_ASR_ENABLED = not _env_bool("FORENSICS_ASR_DISABLED")
@@ -77,6 +80,16 @@ HEARSAY_MODEL_PATH = Path(os.getenv("HEARSAY_MODEL_PATH", str(BASE_DIR / "models
 # --- Storage / integrations ---
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "verity.db")))
 ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip() or None
+
+# --- Twilio SMS alerts (optional; without these, alerts are webhook or in-app only) ---
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+# Twilio trial accounts cannot send custom text: the Body must name one of their predefined
+# templates (e.g. "sms_internal_alerts"). Set this to demo real delivery without upgrading;
+# Verity still records and displays its own alert wording. Leave empty on a paid account.
+TWILIO_TRIAL_TEMPLATE = os.getenv("TWILIO_TRIAL_TEMPLATE", "").strip()
+ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN_SECONDS", "60"))  # one text per family per minute
 CORS_ORIGINS = [
     o.strip()
     for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")

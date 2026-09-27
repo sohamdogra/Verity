@@ -4,6 +4,8 @@
 
 Verity's forensic engine does this. It is the same code that powers **Check a recording** in the app (`/check`, `POST /forensics`). `backend/scripts/hearsay.py` trains it on the NSA data and writes the submission.
 
+**In one paragraph:** we found that the single biggest risk in this challenge was not detection but *leakage* — the provided real and synthetic clips differ in sample rate, length, loudness and encoder tags, so a model can score near-perfectly in training by learning the file format and then fail completely on NSA's normalised test set. So we first rebuild the training set to match the test set exactly, and augment both classes identically. On top of that we stack two frozen self-supervised speech models (WavLM and XLS-R), a set of classical signal-forensic features, and container/metadata analysis, and fuse them with a regularised linear model selected by NSA's own minDCF. Cross-validated against generators it has never seen, the current model reaches **minDCF 0.177 / EER 6.6%**; against the generator families we believe the test set uses, **minDCF 0.028 / EER 1.0%**.
+
 ## Quick start
 
 ```powershell
@@ -15,6 +17,10 @@ docker run --rm -v "C:\path\to\HackGTHearsayTesting:/data:ro" -v "${PWD}:/out" v
 # Local
 cd backend
 .\.venv\Scripts\python scripts\hearsay.py predict --data ..\data\hearsay\test --out teamName_predictions.tsv
+
+# Pass NSA's score-key file to emit rows in exactly its order, and warn on any missing file
+.\.venv\Scripts\python scripts\hearsay.py predict --data ..\data\hearsay\test ^
+    --template HearsayScoreKey.tsv --out teamName_predictions.tsv
 ```
 
 The output matches NSA's template exactly: a tab-separated file with the header `filename	cm-score`. Each row has the file name including its extension, and `cm-score` = P(synthetic) from 0.0 to 1.0.
@@ -53,8 +59,9 @@ Then, with p = 0.5 and **regardless of label**, it applies 1–2 perturbations: 
 
 | Rubric category | What Verity computes | Where |
 |---|---|---|
-| Deep-learning anti-spoofing | 5 pretrained spoof classifiers (wav2vec2 ASVspoof, generic deepfake and in-the-wild models), per 4 s window: mean/max/min/std/fraction flagged | `forensics/neural.py` |
-| SSL front-end | WavLM-base-plus, layers 3–8, mean+std pooled (1,536 dims) | `forensics/neural.py` |
+| SSL front-end #1 | WavLM-base-plus, layers 3–8, mean+std pooled (1,536 dims) | `forensics/neural.py` |
+| SSL front-end #2 | XLS-R 300M, layers 5–10, mean+std pooled (2,048 dims) | `forensics/neural.py` |
+| Deep-learning anti-spoofing | 5 pretrained spoof classifiers (wav2vec2 ASVspoof, generic deepfake and in-the-wild models), per 4 s window: mean/max/min/std/fraction flagged. **Shown to the analyst but excluded from the v3 model** — see results | `forensics/neural.py` |
 | Speaker-embedding consistency | Cosine drift between the WavLM embeddings of each third of the clip ("does the voice drift?") | `forensics/neural.py` |
 | Spectral / frequency domain | Welch bandwidth vs Nyquist; spectral centroid/bandwidth/rolloff/flatness/flux; ZCR; 20 MFCC means/stds/Δ-stds | `forensics/dsp.py` |
 | Prosody & phonetics | YIN pitch: F0 median, spread in semitones, frame jitter, voicing ratio; pause structure via digital silence and noise floor | `forensics/dsp.py` |
@@ -71,92 +78,128 @@ Then, with p = 0.5 and **regardless of label**, it applies 1–2 perturbations: 
 The analyzer decides what to run instead of brute-forcing everything:
 - **By container and codec.** libsndfile decodes WAV/FLAC/OGG/MP3; M4A/AAC/OPUS/WEBM/MP4 go through ffmpeg. Lossy input changes how the bandwidth and compression findings are worded, and the bandwidth-vs-Nyquist check only runs when the native rate is ≥ 32 kHz.
 - **By content.** Too-short or silent input stops early with a clear status. Silent windows are skipped. Long files are sampled evenly (at most 20 windows).
-- **By confidence (cascade).** Stage 1 runs the cheap evidence (signal forensics + WavLM) through the fast model. If it is already confident (P ≤ 0.03 or ≥ 0.97), the 5-detector ensemble is skipped and the report says so. Otherwise it escalates to the full model.
+- **By confidence (cascade).** Stage 1 runs the cheap evidence — signal forensics plus the WavLM front-end — through a fast model. If that is already decisive (P ≤ 0.03 or ≥ 0.97) the expensive stage is skipped and the report says so; otherwise the full model runs. On our demo clips this short-circuits most decisions, and the saving is real: the skipped stage costs roughly four seconds per clip.
+- **By model.** Feature extraction asks the loaded model which front-ends it actually needs, so a model trained without XLS-R never pays to compute it.
 - **By purpose.** Transcription runs only for the interactive report, since it never affects the score.
 
 ## Model and validation
 
-- **Candidates:** logistic regression on detector features only (baseline), on WavLM only, and on everything; gradient boosting on signal + detector features; and a blend.
-- **Selection metric: the challenge's own.** ASVspoof5 minDCF with **π_spoof = 0.3, C_miss = 1, C_fa = 4**, as NSA specified. `forensics/training.py:asvspoof_min_dcf` re-implements `compute_det_curve` / `compute_eer` / `compute_mindcf` and is verified to match the official `calculate_modules.py` to 6 decimals, ties included.
-- **Validation that predicts the test.** 5-fold `StratifiedGroupKFold`, where the group is the **generator** for fakes and the speaker or source file for real clips. Every fold scores generators the model has never seen, which is the situation NSA's test set creates.
+**Selection metric: the challenge's own.** ASVspoof5 minDCF with **π_spoof = 0.3, C_miss = 1, C_fa = 4**, the values NSA specified rather than the package defaults. `forensics/training.py:asvspoof_min_dcf` re-implements `compute_det_curve` / `compute_eer` / `compute_mindcf` and is verified to match the official `calculate_modules.py` to six decimals, ties included. Note the score direction: NSA's template defines `cm-score` as P(synthetic), while the ASVspoof scorer treats higher as bona fide, so our implementation negates before scoring.
 
-## Results (leave-generator-out CV on 4,279 harmonized training clips)
+**Two validation protocols.** Both use 5-fold `StratifiedGroupKFold`; only the grouping differs.
 
-Every number below comes from folds where the model **never saw the generator it is scored on**. Metric: minDCF with π_spoof = 0.3, C_fa = 4 (lower is better; 1.0 = no better than always guessing one class).
+| Protocol | Group | What it answers |
+|---|---|---|
+| **Unseen generators** | generator for fakes, speaker for real | How well do we handle an attack we have never seen? Deliberately pessimistic. |
+| **Seen generators** | source recording | How well do we do when the test set uses the same generators as training, but never the same audio? |
 
-### Candidate models (v1: WavLM + signal + detector features)
+We report both. We believe the second is closer to NSA's test set, because our predictions flag 25% of the test files at the model's own threshold against a stated 30% spoof rate — close enough to suggest the same attack families. But the first is the honest measure of generalisation, so it drives model selection.
+
+## Results
+
+Three models, each a strict superset of the last. All numbers are cross-validated with **unseen generators** unless stated.
+
+| | v1 | v2 | **v3 (current)** |
+|---|---|---|---|
+| Training clips | 4,279 | 4,279 | **10,076** |
+| Front-ends | WavLM-base | + XLS-R 300M | + XLS-R 300M |
+| **minDCF** | 0.2533 | 0.1912 | **0.1772** |
+| EER | 9.77% | 7.78% | **6.63%** |
+| AUC | 0.9661 | 0.9813 | **0.9848** |
+| minDCF, *seen* generators | 0.1011 | 0.0361 | **0.0283** |
+| Manipulation-type accuracy | 96.8% | 98.4% | **99.3%** |
+
+Two things drove the gains. **Adding a second self-supervised front-end mattered most** (v1→v2 cut minDCF by 25%): XLS-R alone beats WavLM alone, and the two together beat either. **Doubling the training data helped less but consistently** (v2→v3), and it particularly improved the hardest category, partial splices, from 0.73 to 0.87 recall.
+
+### Candidate models considered (v3 feature set)
 
 | Model | minDCF | EER | AUC |
 |---|---|---|---|
-| **logreg, all features (selected)** | **0.253** | **9.8%** | **0.966** |
-| logreg, all except the 5 detectors | 0.254 | 9.8% | 0.966 |
-| logreg, WavLM embeddings only | 0.264 | 9.8% | 0.964 |
-| blend(logreg, gradient boosting) | 0.298 | 11.4% | 0.957 |
-| gradient boosting, signal + detectors | 0.524 | 20.2% | 0.879 |
-| 5 pretrained detectors only (baseline) | 0.944 | 43.5% | 0.590 |
+| **Logistic regression, all features (selected)** | **0.1772** | **6.63%** | **0.9848** |
+| Blend of logistic regression + gradient boosting | 0.2168 | 8.03% | 0.9749 |
+| Logistic regression, embeddings only | 0.2378 | 9.14% | 0.9713 |
+
+A well-regularised linear model on top of strong frozen representations beat everything else we tried, including gradient boosting and an SVM. With ~3,700 features and ~10,000 clips, the linear model generalises better across generators.
 
 ### What worked and what had no effect
 
-Each technique family on its own, in the same grouped CV:
+This is the part the challenge explicitly asks about, so here is every technique family scored **on its own**, same grouped CV:
 
-| Technique family | minDCF | EER | AUC | Verdict |
-|---|---|---|---|---|
-| Self-supervised embeddings (WavLM) | 0.268 | 10.0% | 0.963 | **Carries the system** |
-| Spectral statistics + MFCC | 0.619 | 24.6% | 0.828 | Useful, complementary |
-| ENF mains hum | 0.882 | 43.2% | 0.609 | Weak signal |
-| Speaker-embedding drift | 0.987 | 42.4% | 0.606 | Weak alone (3–5 s clips give little room to drift) |
-| Splice / seams (envelope, DC, phase) | 1.000 | 43.8% | 0.582 | No effect on whole-clip fakes; kept for partial fakes |
-| Prosody (pitch, jitter, voicing) | 0.997 | 44.9% | 0.552 | No effect |
-| Noise floor & dynamics | 1.000 | 48.8% | 0.533 | No effect after augmentation (by design: noise is label-blind) |
-| Digital silence | 1.000 | 48.5% | 0.523 | No effect after harmonization (the test set has no silence gaps) |
-| Compression / transcoding traces | 0.986 | 48.4% | 0.505 | No effect (both classes are re-encoded in augmentation) |
-| **5 pretrained deepfake detectors** | 0.946 | 43.6% | 0.590 | **Barely generalize to unseen generators** |
-| Container metadata | — | — | — | Perfect but spurious in training (all real = Lavf tag, no fake has it); constant in test → report-only |
+| Technique family | minDCF | AUC | Verdict |
+|---|---|---|---|
+| Self-supervised embeddings (XLS-R 300M) | 0.226 | 0.975 | **Strongest single technique** |
+| Self-supervised embeddings (WavLM-base) | 0.268 | 0.963 | **Strong, and complementary to XLS-R** |
+| Spectral statistics + MFCC | 0.619 | 0.828 | Genuinely useful, adds to the embeddings |
+| ENF mains hum (50/60 Hz) | 0.882 | 0.609 | Weak but above chance |
+| Speaker-embedding drift | 0.987 | 0.606 | Weak alone — 3–5 s clips give a voice little room to drift |
+| Splice / seams (envelope, DC, phase) | 1.000 | 0.582 | No effect on whole-clip fakes; retained because it is the only thing that can localise a partial fake |
+| Prosody (pitch, jitter, voicing) | 0.997 | 0.552 | No effect |
+| Noise floor & dynamics | 1.000 | 0.533 | No effect |
+| Digital silence | 1.000 | 0.523 | No effect |
+| Compression / transcoding traces | 0.986 | 0.505 | No effect |
+| **5 pretrained deepfake detectors** | **0.946** | **0.590** | **Near chance — dropped from v3** |
+| Container metadata | — | — | Perfect but spurious (see below) — report only |
 
-Two lessons. **Off-the-shelf detectors fail on new generators.** They were trained on ASVspoof-era systems and score near chance on DiffSSD's diffusion and zero-shot models. **Hand-crafted cues are fragile once the obvious shortcuts are removed.** Several of them looked strong on raw files, but only because of format differences that we deliberately neutralized. What transfers is a strong self-supervised representation plus a simple, well-regularized classifier.
+**The two findings we did not expect:**
 
-### Per generator (held out)
+1. **Off-the-shelf deepfake detectors were almost useless here.** Five published models, all scoring close to chance on DiffSSD's diffusion and zero-shot systems. They were trained on ASVspoof-era vocoders, and modern generators simply do not leave the same traces. They were also ~80% of our compute, so dropping them made v3 five times cheaper to train. We kept them in the *application* because their per-window opinions are useful evidence to show a user, but they contribute nothing to the score.
+
+2. **Most hand-crafted forensic cues collapsed once we removed the shortcuts.** Digital silence, noise floor and compression traces all looked strong on the raw files — and all of that was format leakage, not synthesis artefacts. After harmonisation and label-blind augmentation they sit at chance. We think this is the single most important methodological point in our submission: *a cue that only works before you control for format was never detecting synthesis at all.*
+
+**Why metadata is report-only.** In the training data it separates the classes perfectly: every real clip carries the `Lavf58.29.100` encoder tag and no fake does. In the test set it is constant — all 1,671 files share that tag. A classifier fed container fields would score 100% in training and learn nothing transferable. We still parse and report it (encoder tags, RIFF structure, header-vs-payload consistency, MAC timestamps, synthesis-tool signatures), and a broken header or a tool signature is surfaced to the analyst, but it never reaches the model.
+
+### Per generator (held out, v3)
 
 | Held-out class | Correct | | Held-out class | Correct |
 |---|---|---|---|---|
-| YourTTS | 100% | | PlayHT | 91% |
-| XTTS-v2 | 99% | | Real speech (all sources) | 90% |
-| DiffGAN-TTS | 99% | | ElevenLabs | 86% |
-| ProDiff | 98% | | WaveGrad2 | 81% |
-| UnitSpeech | 98% | | Grad-TTS | 69% |
-| SAPI TTS (ours) | 97% | | MMS-TTS (ours) | 68% |
-| OpenVoice v2 | 96% | | Spliced partial fakes (ours) | 63% |
-| | | | FreeVC voice conversion (ours) | 57% |
+| DiffGAN-TTS | 100% | | ElevenLabs | 92% |
+| ProDiff | 100% | | WaveGrad2 | 93% |
+| UnitSpeech | 100% | | Real speech (all sources) | 93% |
+| OpenVoice v2 | 100% | | Grad-TTS | 56% |
+| XTTS-v2 | 100% | | Partial splices (ours) | 58% |
+| YourTTS | 100% | | FreeVC voice conversion (ours) | 67% |
+| PlayHT | 98% | | | |
 
-The hardest held-out cases are voice conversion and partial splices, the attack types NSA lists that DiffSSD doesn't contain. The manipulation-type classifier identifies the generator of a detected fake with 96.8% CV accuracy.
+The three weak cases are exactly the ones our training data covers thinnest: Grad-TTS, and the two attack types DiffSSD does not contain at all — voice conversion and partial splices, both of which we had to generate ourselves.
 
 ## Reproduce
 
 ```powershell
 cd backend
-# 1. training clips: sample, harmonize, augment -> data/hearsay/prepared/train (+ labels.csv with a group column)
+# 1. Build the training set: sample, harmonise to the test format, augment label-blind.
+#    Run twice with different --prefix/--seed to grow it (the second call appends).
 .\.venv\Scripts\python scripts\hearsay_prepare.py
-# 2. features (cached; shards can run in parallel terminals)
-.\.venv\Scripts\python scripts\hearsay.py extract --data ..\data\hearsay\prepared\train --shard 0 --shards 3
-.\.venv\Scripts\python scripts\hearsay.py extract --data ..\data\hearsay\test --shard 0 --shards 3
-# 3. train (full model) and the fast stage-1 / Live Shield model
-.\.venv\Scripts\python scripts\hearsay.py train --data ..\data\hearsay\prepared\train --labels ..\data\hearsay\prepared\train\labels.csv --group-col group
-.\.venv\Scripts\python scripts\hearsay.py train --data ..\data\hearsay\prepared\train --labels ..\data\hearsay\prepared\train\labels.csv --group-col group --feature-set live --out models\hearsay_live.joblib --skip-family-report
-# 4. submission
-.\.venv\Scripts\python scripts\hearsay.py predict --data ..\data\hearsay\test --out teamName_predictions.tsv
+.\.venv\Scripts\python scripts\hearsay_prepare.py --prefix batch2 --append --seed 21 --per-generator 250
+
+# 2. Extract features. Cached by file content, so this is only paid once.
+#    Shards run in parallel terminals; --no-detectors skips the ensemble we found useless.
+.\.venv\Scripts\python scripts\hearsay.py extract --data ..\data\hearsay\prepared\train --shard 0 --shards 4 --no-detectors --extra-embeddings
+.\.venv\Scripts\python scripts\hearsay.py extract --data ..\data\hearsay\test --shard 0 --shards 4 --no-detectors --extra-embeddings
+
+# 3. Train. --group-col group gives the leave-generator-out protocol.
+.\.venv\Scripts\python scripts\hearsay.py train --data ..\data\hearsay\prepared\train ^
+    --labels ..\data\hearsay\prepared\train\labels.csv --group-col group --no-detectors
+
+# 4. Submission TSV, in the exact file order of NSA's score key.
+.\.venv\Scripts\python scripts\hearsay.py predict --data ..\data\hearsay\test ^
+    --template HearsayScoreKey.tsv --out verity_predictions.tsv
 ```
 
-Expected layout (the `data/` folder is git-ignored; NSA data is never committed):
+Expected layout (`data/` is git-ignored — NSA's audio is never committed):
 
 ```
-data/hearsay/real/resampled/LJ*.wav             (LJRealResampled)
-data/hearsay/spoof/DiffSSD/generated_speech/…   (DiffSSD)
-data/hearsay/test/HackGTHearsayTesting/HGT*.wav (test set)
-data/extra/LibriSpeech/dev-clean, dev-other     (openslr.org/12)
+data/hearsay/real/resampled/LJ*.wav             LJRealResampled
+data/hearsay/spoof/DiffSSD/generated_speech/...  DiffSSD, 10 generators
+data/hearsay/test/HackGTHearsayTesting/HGT*.wav  the 1,671 test clips
+data/extra/LibriSpeech/dev-clean, dev-other      openslr.org/12
 ```
+
+**Runtime on the laptop we developed on** (8-core CPU, no GPU): feature extraction runs at roughly one clip per second per worker, so the full 10,076-clip training set took about 90 minutes across four parallel workers. Training is about 20 minutes; scoring the 1,671 test clips from cache is under a minute.
 
 ## Honest limits
 
-- There is only one real speaker in the NSA training data. We add public LibriSpeech speakers, but the test set's bona fide conditions (smartphone, telephony, field) may still differ from anything we trained on.
-- Leave-generator-out CV estimates performance on *unseen* generators, but the test set may also contain attacks absent from training: replay, scene manipulation, laundering chains.
-- Scores are probabilities from a classifier trained with balanced classes. minDCF depends only on the ranking; actDCF/CLLR in the ASVspoof5 package expect log-likelihood ratios and are not meaningful for these scores.
+- **Our real speech is the narrow side of the data.** One LJ Speech speaker plus 73 LibriSpeech audiobook readers. NSA's brief mentions studio, smartphone, telephony and field recordings; a bona fide clip unlike anything we trained on is our most likely failure mode, and it costs 0.7 per unit rate in their cost function.
+- **Three attack types in the brief are absent from our training data**: replay attacks, scene manipulation, and metadata-spoofed containers. We generate our own voice conversion and partial splices to partially cover the gap, and those are measurably our weakest categories (67% and 58%).
+- **The seen-generator number is an estimate, not a score.** It assumes the test set draws on the same attack families as training. The evidence for that is circumstantial: our flag rate lines up with the stated 30% spoof prevalence.
+- **minDCF depends only on ranking**, so our scores are usable for the challenge metric but are not calibrated probabilities; actDCF and CLLR from the ASVspoof package would not be meaningful for them.
+- **No GPU.** Everything here is frozen pretrained front-ends plus a linear classifier. Fine-tuning the front-end is the obvious next step and is where the remaining headroom almost certainly is, but it was not reachable on a CPU-only laptop in the time available.

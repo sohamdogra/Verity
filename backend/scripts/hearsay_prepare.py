@@ -75,7 +75,7 @@ def plan(args) -> list[dict]:
     rng.shuffle(items)
     for i, item in enumerate(items):
         item["seed"] = args.seed * 1_000_003 + i
-        item["out"] = f"train_{i:05d}.wav"
+        item["out"] = f"{args.prefix}_{i:05d}.wav"
     return items
 
 
@@ -111,6 +111,8 @@ def main() -> None:
     ap.add_argument("--libri-other-per-speaker", type=int, default=15)
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 2))
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--prefix", default="train", help="Filename prefix, so extra batches don't collide")
+    ap.add_argument("--append", action="store_true", help="Add to an existing labels.csv instead of replacing it")
     args = ap.parse_args()
 
     items = plan(args)
@@ -129,7 +131,13 @@ def main() -> None:
                 rows.append(row)
             if i % 500 == 0:
                 print(f"  {i}/{len(items)}", flush=True)
-    with (args.out / "labels.csv").open("w", newline="", encoding="utf-8") as f:
+    labels = args.out / "labels.csv"
+    if args.append and labels.exists():
+        existing = list(csv.DictReader(labels.open(encoding="utf-8")))
+        keep = {r["filename"] for r in rows}
+        rows = [r for r in existing if r["filename"] not in keep] + rows
+        print(f"Appending to {len(existing)} existing rows -> {len(rows)} total")
+    with labels.open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
