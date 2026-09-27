@@ -74,6 +74,12 @@ FORENSICS_MAX_WINDOWS = 20
 # Orchestration: when the fast model (embeddings + signal features) is already confident,
 # skip the expensive 5-detector ensemble. Thresholds are on P(synthetic).
 FORENSICS_CASCADE = not _env_bool("FORENSICS_CASCADE_DISABLED")
+# Points on the "synthetic signal over time" strip. Each one costs an embedding pass, so
+# this trades responsiveness against resolution; 8 is plenty to see where a clip turns.
+FORENSICS_TIMELINE_POINTS = int(os.getenv("FORENSICS_TIMELINE_POINTS", "8"))
+# Run the pretrained detector ensemble for the report even when the trained model ignores
+# it. Good evidence to show an analyst, but it costs ~4 s per check.
+FORENSICS_REPORT_DETECTORS = _env_bool("FORENSICS_REPORT_DETECTORS", True)
 CASCADE_LOW, CASCADE_HIGH = 0.03, 0.97
 HEARSAY_MODEL_PATH = Path(os.getenv("HEARSAY_MODEL_PATH", str(BASE_DIR / "models" / "hearsay.joblib")))
 

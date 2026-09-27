@@ -76,6 +76,13 @@ def plan(args) -> list[dict]:
     for i, item in enumerate(items):
         item["seed"] = args.seed * 1_000_003 + i
         item["out"] = f"{args.prefix}_{i:05d}.wav"
+        # Weight this batch towards attack types NSA lists but our sources lack.
+        # Chosen without looking at the label, so it cannot become a shortcut.
+        roll = rng.random()
+        if roll < args.replay_share:
+            item["force"] = "replay"
+        elif roll < args.replay_share + args.scene_share:
+            item["force"] = "scene"
     return items
 
 
@@ -92,7 +99,8 @@ def _process(job: tuple[dict, str]) -> dict | None:
         y = to_test_domain(y.mean(axis=1), sr, rng)
         if y.size < 16_000 * 1.5 or np.abs(y).max() < 1e-3:
             return None
-        y, augs = augment(y, rng, p=0.5)
+        forced = item.get("force")
+        y, augs = augment(y, rng, p=0.5, force=forced)
         sf.write(Path(out_dir) / item["out"], y, 16_000, subtype="PCM_16")
         return {"filename": item["out"], "label": item["label"], "manipulation_type": item["type"],
                 "group": item["group"], "source": item["source"], "augment": "+".join(augs) or "none",
@@ -111,6 +119,10 @@ def main() -> None:
     ap.add_argument("--libri-other-per-speaker", type=int, default=15)
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 2))
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--replay-share", type=float, default=0.0,
+                    help="Fraction of clips played through a simulated speaker->room->mic chain")
+    ap.add_argument("--scene-share", type=float, default=0.0,
+                    help="Fraction of clips given a fabricated acoustic background")
     ap.add_argument("--prefix", default="train", help="Filename prefix, so extra batches don't collide")
     ap.add_argument("--append", action="store_true", help="Add to an existing labels.csv instead of replacing it")
     args = ap.parse_args()

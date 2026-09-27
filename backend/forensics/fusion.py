@@ -17,6 +17,22 @@ TYPE_LABELS = {
     "partial_synthetic": "Partially synthetic or spliced (real and generated audio mixed)",
 }
 
+# The trained type model predicts the generator it was trained on ("xtts_v2", "devset_freevc").
+# Those names are meaningful in HEARSAY.md but meaningless to a worried family, so the app
+# shows the attack family instead. Unknown names fall back to a tidied version of themselves.
+GENERATOR_FAMILIES = {
+    "voice clone": ("xtts", "your_tts", "openvoice", "elevenlabs", "playht", "unit_speech", "clone"),
+    "voice conversion": ("freevc", "conversion", "_vc"),
+    "spliced": ("splice", "partial"),
+    "text-to-speech": ("tts", "diffgan", "grad", "pro_diff", "wavegrad", "sapi", "mms"),
+}
+FAMILY_LABELS = {
+    "voice clone": "Voice clone (a real person's voice, synthesized)",
+    "voice conversion": "Voice conversion (one speaker converted into another)",
+    "spliced": "Partially synthetic (generated speech spliced into real audio)",
+    "text-to-speech": "Fully synthetic speech (text-to-speech)",
+}
+
 # Relative trust in each detector for the untrained default (tuned on our dev clips; see HEARSAY.md).
 DEFAULT_DETECTOR_WEIGHTS = {
     "Bisher/wav2vec2_ASV_deepfake_audio_detection": 3.0,
@@ -28,8 +44,22 @@ DEFAULT_DETECTOR_WEIGHTS = {
 SIGNAL_WEIGHT = 0.15
 
 
+def type_family(key: str) -> str | None:
+    """Map a trained generator name to the attack family a person would recognise."""
+    name = key.lower()
+    for family, markers in GENERATOR_FAMILIES.items():
+        if any(m in name for m in markers):
+            return family
+    return None
+
+
 def type_label(key: str) -> str:
-    return TYPE_LABELS.get(key, key.replace("_", " ").strip().capitalize())
+    if key in TYPE_LABELS:
+        return TYPE_LABELS[key]
+    family = type_family(key)
+    if family:
+        return FAMILY_LABELS[family]
+    return key.replace("_", " ").strip().capitalize()
 
 
 class TrainedBundle:

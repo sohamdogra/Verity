@@ -102,11 +102,75 @@ def _codec(y: np.ndarray, rng: random.Random) -> np.ndarray:
     return dec[: y.size] if dec.size >= y.size else np.pad(dec, (0, y.size - dec.size))
 
 
-AUGMENTATIONS = {"noise": _add_noise, "telephone": _telephone, "reverb": _reverb, "codec": _codec}
+def _speaker_response(y: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Colour the audio like a small phone/laptop loudspeaker: no deep bass, peaky mids."""
+    from scipy.signal import butter, sosfiltfilt
+
+    low = rng.uniform(150, 400)  # small drivers roll off hard below this
+    high = rng.uniform(5_000, 7_500)
+    sos = butter(4, [low, high], btype="band", fs=SR, output="sos")
+    out = sosfiltfilt(sos, y).astype(np.float32)
+    # A resonant peak somewhere in the midrange, as cheap speakers have.
+    peak = rng.uniform(800, 2_500)
+    sos_peak = butter(2, [peak * 0.8, peak * 1.25], btype="band", fs=SR, output="sos")
+    return (out + rng.uniform(0.2, 0.6) * sosfiltfilt(sos_peak, out)).astype(np.float32)
 
 
-def augment(y: np.ndarray, rng: random.Random, p: float = 0.5) -> tuple[np.ndarray, list[str]]:
-    """With probability p apply 1-2 random perturbations, then re-apply the test-domain finish."""
+def _replay(y: np.ndarray, rng: random.Random) -> np.ndarray:
+    """A recording of a playback: speaker -> room -> microphone.
+
+    This is the "replay attack" in NSA's brief, and it is also exactly what happens when
+    someone holds a phone playing a clone up to a laptop microphone. Without it the model
+    has never seen a synthetic voice that has travelled through air."""
+    out = _speaker_response(y, rng)
+    # Mild clipping/compression from a driven speaker.
+    drive = rng.uniform(1.0, 2.5)
+    out = np.tanh(out * drive) / np.tanh(drive)
+    out = _reverb(out, rng)  # the room between speaker and mic
+    # Microphone: slight high-frequency loss plus its own noise floor.
+    from scipy.signal import butter, sosfiltfilt
+
+    sos = butter(2, rng.uniform(6_000, 7_600), btype="low", fs=SR, output="sos")
+    out = sosfiltfilt(sos, out).astype(np.float32)
+    noise = np.random.default_rng(rng.randrange(1 << 30)).standard_normal(out.size).astype(np.float32)
+    snr = rng.uniform(15, 35)
+    noise *= np.sqrt((np.mean(out**2) + 1e-12) / (10 ** (snr / 10)) / (np.mean(noise**2) + 1e-12))
+    return (out + noise).astype(np.float32)
+
+
+def _scene(y: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Scene manipulation: a fabricated acoustic background laid under the voice."""
+    gen = np.random.default_rng(rng.randrange(1 << 30))
+    kind = rng.choice(["room", "traffic", "hum", "babble"])
+    n = gen.standard_normal(y.size).astype(np.float32)
+    if kind == "traffic":  # low rumble
+        n = np.cumsum(n) * 0.01
+        n -= np.convolve(n, np.ones(800) / 800, mode="same")
+    elif kind == "hum":  # mains hum with harmonics, as a fabricated "indoors" cue
+        t = np.arange(y.size) / SR
+        f0 = rng.choice([50.0, 60.0])
+        n = sum(np.sin(2 * np.pi * f0 * k * t) / k for k in (1, 2, 3)).astype(np.float32)
+    elif kind == "babble":  # crude crowd noise: noise modulated at speech-like rates
+        env = 1 + 0.7 * np.sin(2 * np.pi * rng.uniform(1.5, 4.0) * np.arange(y.size) / SR)
+        n = (n * env).astype(np.float32)
+    snr = rng.uniform(5, 20)
+    n *= np.sqrt((np.mean(y**2) + 1e-12) / (10 ** (snr / 10)) / (np.mean(n**2) + 1e-12))
+    return (y + n).astype(np.float32)
+
+
+AUGMENTATIONS = {"noise": _add_noise, "telephone": _telephone, "reverb": _reverb, "codec": _codec,
+                 "replay": _replay, "scene": _scene}
+
+
+def augment(y: np.ndarray, rng: random.Random, p: float = 0.5,
+            force: str | None = None) -> tuple[np.ndarray, list[str]]:
+    """With probability p apply 1-2 random perturbations, then re-apply the test-domain finish.
+
+    `force` always applies that one augmentation, so a batch can be weighted towards an
+    attack we are short of (replay, scene) without changing the label-blind rule: it is
+    chosen by the caller for real and fake clips alike."""
+    if force:
+        return peak_normalize(lowpass(AUGMENTATIONS[force](y, rng))), [force]
     if rng.random() >= p:
         return y, []
     names = rng.sample(list(AUGMENTATIONS), k=rng.choice([1, 1, 2]))

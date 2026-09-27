@@ -140,3 +140,18 @@ def test_analyzer_constructs_and_loads_bundles(tmp_path, monkeypatch):
     a = ForensicAnalyzer()
     assert a.bundle is None and a.fast_bundle is None
     assert hasattr(a, "transcriber") and isinstance(a.extra_embedders, list)
+
+
+def test_generator_names_map_to_human_families():
+    from forensics.fusion import type_label
+
+    assert type_label("none") == "No manipulation indicated"
+    assert "Voice clone" in type_label("xtts_v2")
+    assert "Voice clone" in type_label("devset_xtts_clone")
+    assert "Voice clone" in type_label("elevenlabs")
+    assert "Voice conversion" in type_label("devset_freevc")
+    assert "Partially synthetic" in type_label("devset_partial_splice")
+    assert "text-to-speech" in type_label("diffgan_tts")
+    assert "text-to-speech" in type_label("wavegrad2")
+    # An unknown generator still reads tidily rather than raw.
+    assert type_label("some_new_model") == "Some new model"

@@ -147,8 +147,11 @@ class ForensicAnalyzer:
         y, duration = decoded.audio, decoded.audio.size / SR
         fast = self.fast_bundle
         if fast is not None and not fast.data.get("uses_detectors", True) and not fast.extra_prefixes:
+            # Each timeline point costs an embedding pass, so the count is capped: this is
+            # a visual aid, and a handful of points already shows where a clip goes wrong.
             win = 2.0
-            hop = max(1.0, (duration - win) / 23) if duration > win else win
+            steps = max(1, config.FORENSICS_TIMELINE_POINTS - 1)
+            hop = max(1.0, (duration - win) / steps) if duration > win else win
             starts = np.arange(0.0, max(duration - win, 0.0) + 1e-6, hop)
             out = []
             for s in starts:
@@ -210,7 +213,11 @@ class ForensicAnalyzer:
                 feats.update(det_feats)
                 techniques = det_techniques + techniques
         else:
-            feats, techniques, more = self.extract(decoded, embeddings=bool(bundle and bundle.uses_embeddings))
+            # Run the detector ensemble only if the model needs it, or if we're showing it
+            # to an analyst; it is ~4 s and contributes nothing to the score on its own.
+            want_detectors = (bundle.data.get("uses_detectors", True) if bundle else True) or config.FORENSICS_REPORT_DETECTORS
+            feats, techniques, more = self.extract(decoded, embeddings=bool(bundle and bundle.uses_embeddings),
+                                                   detectors=want_detectors)
             steps += more
             wanted = bundle.extra_prefixes if bundle is not None else set()
             if wanted:

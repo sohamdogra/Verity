@@ -1,0 +1,153 @@
+{
+  "version": "hearsay-20260927-0332",
+  "selected": "logreg_all_features",
+  "threshold": 0.15726529054634877,
+  "cv": {
+    "logreg_embeddings_only": {
+      "n": 10076,
+      "accuracy": 0.9063120285827709,
+      "balanced_accuracy": 0.9050845467781743,
+      "auc": 0.9712874773502307,
+      "eer": 0.09140498552923731,
+      "eer_threshold": 0.3171750864078045,
+      "min_dcf": 0.2378280391391261
+    },
+    "logreg_all_features": {
+      "n": 10076,
+      "accuracy": 0.9315204446208813,
+      "balanced_accuracy": 0.9296719039976419,
+      "auc": 0.9869026224420929,
+      "eer": 0.05994293118115223,
+      "eer_threshold": 0.15726529054634877,
+      "min_dcf": 0.15921934908923138
+    },
+    "blend(logreg_all, gboost)": {
+      "n": 10076,
+      "accuracy": 0.9282453354505756,
+      "balanced_accuracy": 0.9261618307972481,
+      "auc": 0.9778925390638006,
+      "eer": 0.07463587186956636,
+      "eer_threshold": 0.18842583248855935,
+      "min_dcf": 0.20023534502636753
+    }
+  },
+  "per_class_accuracy": {
+    "devset_freevc": 0.75,
+    "devset_mms_tts": 0.8875,
+    "devset_partial_splice": 0.6,
+    "devset_sapi_tts": 1.0,
+    "devset_xtts_clone": 0.975,
+    "diffgan_tts": 1.0,
+    "elevenlabs": 0.9222222222222223,
+    "grad_tts": 0.5955555555555555,
+    "none": 0.9400153315446531,
+    "openvoicev2": 1.0,
+    "playht": 0.9733333333333334,
+    "pro_diff": 1.0,
+    "unit_speech": 1.0,
+    "wavegrad2": 0.9755555555555555,
+    "xtts_v2": 0.9977777777777778,
+    "your_tts": 1.0
+  },
+  "type_model": {
+    "accuracy": 0.9940304652120214,
+    "per_type_recall": {
+      "devset_freevc": 0.9833333333333333,
+      "devset_mms_tts": 1.0,
+      "devset_partial_splice": 0.8666666666666667,
+      "devset_sapi_tts": 1.0,
+      "devset_xtts_clone": 0.8875,
+      "diffgan_tts": 0.9977728285077951,
+      "elevenlabs": 0.9977777777777778,
+      "grad_tts": 0.9955555555555555,
+      "openvoicev2": 0.9977777777777778,
+      "playht": 0.9977777777777778,
+      "pro_diff": 0.9977728285077951,
+      "unit_speech": 1.0,
+      "wavegrad2": 1.0,
+      "xtts_v2": 0.9911111111111112,
+      "your_tts": 1.0
+    }
+  },
+  "n_train": 10076,
+  "technique_families": [
+    {
+      "family": "Self-supervised embeddings (XLS-R 300M)",
+      "features": 2048,
+      "min_dcf": 0.20841174804969262,
+      "eer": 0.07949447718817328,
+      "auc": 0.977544360252797
+    },
+    {
+      "family": "Self-supervised embeddings (WavLM-large)",
+      "features": 2048,
+      "min_dcf": 0.20932689104285637,
+      "eer": 0.07860367436341978,
+      "auc": 0.9779100939664627
+    },
+    {
+      "family": "Self-supervised embeddings (WavLM)",
+      "features": 1536,
+      "min_dcf": 0.2445964093500782,
+      "eer": 0.09200832189174468,
+      "auc": 0.9700885761214506
+    },
+    {
+      "family": "Spectral statistics + MFCC",
+      "features": 72,
+      "min_dcf": 0.6479592005802778,
+      "eer": 0.25129184358984114,
+      "auc": 0.8280617209864009
+    },
+    {
+      "family": "ENF mains hum",
+      "features": 2,
+      "min_dcf": 0.8815663423046644,
+      "eer": 0.43329973311814046,
+      "auc": 0.5988450294220169
+    },
+    {
+      "family": "Compression / transcoding traces",
+      "features": 3,
+      "min_dcf": 0.9655328450030926,
+      "eer": 0.47251994986477597,
+      "auc": 0.5272621326468958
+    },
+    {
+      "family": "Speaker-embedding drift",
+      "features": 2,
+      "min_dcf": 0.9853089528741202,
+      "eer": 0.4168393884992271,
+      "auc": 0.6066237843131284
+    },
+    {
+      "family": "Noise floor & dynamics",
+      "features": 5,
+      "min_dcf": 0.9889353054666904,
+      "eer": 0.4797563963358934,
+      "auc": 0.5478429087897752
+    },
+    {
+      "family": "Prosody (pitch, jitter, voicing)",
+      "features": 4,
+      "min_dcf": 0.9953276795313127,
+      "eer": 0.44859601016906203,
+      "auc": 0.5683646294511147
+    },
+    {
+      "family": "Splice / seams (envelope, DC, phase)",
+      "features": 4,
+      "min_dcf": 0.9989809590339694,
+      "eer": 0.4343005598159836,
+      "auc": 0.5793499352480511
+    },
+    {
+      "family": "Digital silence",
+      "features": 2,
+      "min_dcf": 0.9995558919584615,
+      "eer": 0.5206481948589461,
+      "auc": 0.4820966029330337
+    }
+  ],
+  "cv_grouping": "group"
+}

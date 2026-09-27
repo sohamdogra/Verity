@@ -20,3 +20,6 @@ backend/.hearsay_cache/
 
 # HEARSAY data from NSA (never commit)
 data/
+
+# Docker test output (regenerate with the container)
+submission/docker_out/

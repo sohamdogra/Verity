@@ -22,9 +22,11 @@ import copy
 import csv
 import json
 import logging
+import os
 import sys
 import time
 import warnings
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -128,6 +130,32 @@ def featurize(paths: list[Path], embeddings: bool = True, threads: int | None = 
             eta = rate * sum(1 for _ in paths[i:]) if fresh else 0
             print(f"  features {i}/{len(paths)}  ({fresh} computed, ~{eta / 60:.1f} min left)", flush=True)
     return out
+
+
+def _featurize_shard(job: tuple) -> int:
+    """Worker entry point: fill the shared on-disk cache for one slice of the files."""
+    paths, embeddings, extra, detectors, threads = job
+    featurize(paths, embeddings=embeddings, threads=threads, extra=extra, detectors=detectors)
+    return len(paths)
+
+
+def featurize_parallel(paths: list[Path], workers: int, **kwargs) -> list[dict | None]:
+    """Same result as featurize(), but fills the cache from several processes first.
+
+    One clip at a time barely uses a multi-core CPU, because the models are small enough
+    that PyTorch cannot spread a single short forward pass across many cores. Sharding the
+    files across processes is roughly linear, and the cache makes the final read cheap."""
+    if workers <= 1 or len(paths) < workers * 2:
+        return featurize(paths, **kwargs)
+    threads = max(1, (os.cpu_count() or 4) // workers)
+    shards = [paths[i::workers] for i in range(workers)]
+    print(f"  extracting with {workers} workers x {threads} threads ...", flush=True)
+    jobs = [(s, kwargs.get("embeddings", True), kwargs.get("extra", False),
+             kwargs.get("detectors", True), threads) for s in shards]
+    with ProcessPoolExecutor(workers) as pool:
+        for done in pool.map(_featurize_shard, jobs):
+            print(f"  worker finished {done} files", flush=True)
+    return featurize(paths, **kwargs)  # now a pure cache read
 
 
 def _matrix(feats: list[dict], names: list[str]) -> np.ndarray:
@@ -289,7 +317,7 @@ def cmd_train(args) -> None:
     print(f"\nSaved {args.out} (+ metrics JSON)")
 
 
-def predict_paths(paths: list[Path], model_path: Path, threads: int | None = None) -> list[dict]:
+def predict_paths(paths: list[Path], model_path: Path, threads: int | None = None, workers: int = 1) -> list[dict]:
     bundle = load_bundle(model_path, None)
     out = []
     if bundle is None:
@@ -306,8 +334,8 @@ def predict_paths(paths: list[Path], model_path: Path, threads: int | None = Non
             if i % 10 == 0:
                 print(f"  {i}/{len(paths)}", flush=True)
         return out
-    feats = featurize(paths, embeddings=bundle.uses_embeddings, threads=threads, extra=bundle.extra_prefixes,
-                      detectors=bundle.data.get("uses_detectors", True))
+    feats = featurize_parallel(paths, workers, embeddings=bundle.uses_embeddings, threads=threads,
+                               extra=bundle.extra_prefixes, detectors=bundle.data.get("uses_detectors", True))
     for path, f in zip(paths, feats):
         if f is None:
             out.append({"path": path, "p": 0.5, "type": "unknown", "threshold": bundle.threshold})
@@ -324,7 +352,7 @@ def predict_paths(paths: list[Path], model_path: Path, threads: int | None = Non
 def cmd_predict(args) -> None:
     paths = list_audio(args.data)[: args.limit or None]
     print(f"Predicting {len(paths)} files ...")
-    results = predict_paths(paths, args.model, threads=args.threads)
+    results = predict_paths(paths, args.model, threads=args.threads, workers=args.workers)
     if args.format == "tsv":
         # Official HEARSAY format: header "filename<TAB>cm-score", score = P(synthetic) in [0, 1].
         scores = {r["path"].name: min(1.0, max(0.0, r["p"])) for r in results}
@@ -428,6 +456,8 @@ def main() -> None:
     p.add_argument("--out", type=Path, default=Path("predictions.tsv"))
     p.add_argument("--format", choices=["tsv", "csv"], default="tsv", help="tsv = official HEARSAY submission format")
     p.add_argument("--template", type=Path, help="NSA score-key TSV: output follows its file list and order")
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) // 2),
+                   help="Parallel feature-extraction processes (default: half the cores)")
     p.add_argument("--threads", type=int)
     p.add_argument("--model", type=Path, default=config.HEARSAY_MODEL_PATH)
     p.add_argument("--id-col", default="filename", help="Header for the file column")
