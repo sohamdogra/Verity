@@ -8,11 +8,26 @@ Verity's forensic engine does this. It is the same code that powers **Check a re
 
 ## Quick start
 
+### Docker — what judges run
+
+```bash
+# macOS / Linux
+docker build -t verity-hearsay backend
+docker run --rm -v "/path/to/HackGTHearsayTesting:/data:ro" -v "$PWD:/out" verity-hearsay
+```
 ```powershell
-# Docker (what judges run): scores every file in the mounted folder
+# Windows PowerShell
 docker build -t verity-hearsay backend
 docker run --rm -v "C:\path\to\HackGTHearsayTesting:/data:ro" -v "${PWD}:/out" verity-hearsay
-# -> ./predictions.tsv   (header: filename<TAB>cm-score)
+```
+
+This writes `predictions.tsv` (header `filename<TAB>cm-score`) into the folder you mounted at `/out`.
+
+The build takes about 20 minutes and produces an ~8 GB image, because the trained model and both speech front-ends are baked in. In exchange the container needs **no network at run time** — we verified it with `--network none`, and it reproduced our host predictions to within 0.000007 on all 1,671 test clips. Scoring the full test set takes roughly an hour on 8 CPU cores; pass `--workers 8` to use more parallelism if the machine has it.
+
+### Running it directly
+
+```powershell
 
 # Local
 cd backend
